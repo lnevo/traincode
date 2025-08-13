@@ -109,14 +109,19 @@ void setup() {
   if (WiFi.status() == WL_CONNECTED) {
     delay(2000);  // Give WiFi time to stabilize
     Serial.println("WiFi connected, attempting MQTT connection...");
-  }
-  
-  // Setup MQTT
-  setupMQTT();
-  
-  // Attempt initial MQTT connection if WiFi is available
-  if (WiFi.status() == WL_CONNECTED) {
+    
+    // Now setup MQTT with the loaded credentials
+    setupMQTT();
+    
+    // Test broker connectivity before attempting connection
+    testMQTTBrokerConnectivity();
+    
+    // Attempt initial MQTT connection
+    Serial.println("Attempting initial MQTT connection...");
     mqttReconnect();
+  } else {
+    // If WiFi didn't connect, still setup MQTT for when it does connect
+    setupMQTT();
   }
   
   // Setup web server for configuration
@@ -219,18 +224,23 @@ void loadWiFiCredentials() {
 }
 
 void loadMQTTCredentials() {
+  Serial.println("=== Loading MQTT Credentials ===");
+  
   // Load MQTT settings from preferences if they exist
   String broker = preferences.getString("mqtt_broker", "");
   int port = preferences.getInt("mqtt_port", 0);
   String client_id = preferences.getString("mqtt_client_id", "");
   String topic_prefix = preferences.getString("mqtt_topic_prefix", "");
   
+  Serial.println("From preferences:");
+  Serial.println("  Broker: " + (broker.length() > 0 ? broker : "NOT SET"));
+  Serial.println("  Port: " + (port > 0 ? String(port) : "NOT SET"));
+  Serial.println("  Client ID: " + (client_id.length() > 0 ? client_id : "NOT SET"));
+  Serial.println("  Topic Prefix: " + (topic_prefix.length() > 0 ? topic_prefix : "NOT SET"));
+  
   if (broker.length() > 0 && port > 0 && client_id.length() > 0 && topic_prefix.length() > 0) {
-    Serial.println("Loaded saved MQTT credentials for broker: " + broker + ":" + String(port));
+    Serial.println("✅ Loaded saved MQTT credentials for broker: " + broker + ":" + String(port));
     // Update MQTT client settings
-    mqtt_client.setServer(broker.c_str(), port);
-    
-    // Update our stored broker info
     mqtt_broker_ip = broker;
     mqtt_broker_port = port;
     
@@ -240,9 +250,40 @@ void loadMQTTCredentials() {
     mqtt_turnout_topic = mqtt_base_topic + "/turnouts";
     mqtt_signal_topic = mqtt_base_topic + "/signals";
     mqtt_status_topic = mqtt_base_topic + "/status";
+    
+    Serial.println("Updated topic strings:");
+    Serial.println("  Base: " + mqtt_base_topic);
+    Serial.println("  Sensors: " + mqtt_sensor_topic);
+    Serial.println("  Turnouts: " + mqtt_turnout_topic);
+    Serial.println("  Signals: " + mqtt_signal_topic);
+    Serial.println("  Status: " + mqtt_status_topic);
   } else {
-    Serial.println("No saved MQTT credentials found, using defaults from config.h");
+    Serial.println("⚠️ No saved MQTT credentials found, will use defaults from config.h");
+    Serial.println("Default values from config.h:");
+    Serial.println("  Broker: " + String(MQTT_BROKER));
+    Serial.println("  Port: " + String(MQTT_PORT));
+    Serial.println("  Client ID: " + String(MQTT_CLIENT_ID));
+    Serial.println("  Topic Prefix: " + String(MQTT_TOPIC_PREFIX));
   }
+  
+  Serial.println("===============================");
+}
+
+void clearMQTTCredentials() {
+  Serial.println("=== Clearing MQTT Credentials ===");
+  Serial.println("Removing saved MQTT settings from preferences");
+  
+  preferences.remove("mqtt_broker");
+  preferences.remove("mqtt_port");
+  preferences.remove("mqtt_client_id");
+  preferences.remove("mqtt_topic_prefix");
+  
+  // Reset stored values
+  mqtt_broker_ip = "";
+  mqtt_broker_port = 0;
+  
+  Serial.println("MQTT credentials cleared. Device will use defaults from config.h on next restart.");
+  Serial.println("===============================");
 }
 
 void setupWiFi() {
@@ -294,28 +335,48 @@ void setupWiFi() {
 }
 
 void setupMQTT() {
-  // Load MQTT settings from preferences if they exist, otherwise use defaults from config.h
-  String broker = preferences.getString("mqtt_broker", MQTT_BROKER);
-  int port = preferences.getInt("mqtt_port", MQTT_PORT);
-  String client_id = preferences.getString("mqtt_client_id", MQTT_CLIENT_ID);
-  String topic_prefix = preferences.getString("mqtt_topic_prefix", MQTT_TOPIC_PREFIX);
+  Serial.println("=== Setting up MQTT ===");
   
-  // Store broker info for debugging
-  mqtt_broker_ip = broker;
-  mqtt_broker_port = port;
+  // Check if we have loaded credentials from preferences
+  if (mqtt_broker_ip.length() > 0 && mqtt_broker_port > 0) {
+    Serial.println("Using loaded credentials from preferences:");
+    Serial.println("  Broker: " + mqtt_broker_ip);
+    Serial.println("  Port: " + String(mqtt_broker_port));
+    Serial.println("  Client ID: " + String(MQTT_CLIENT_ID));
+    Serial.println("  Topic Prefix: " + String(MQTT_TOPIC_PREFIX));
+  } else {
+    Serial.println("No credentials loaded, using defaults from config.h:");
+    Serial.println("  Broker: " + String(MQTT_BROKER));
+    Serial.println("  Port: " + String(MQTT_PORT));
+    Serial.println("  Client ID: " + String(MQTT_CLIENT_ID));
+    Serial.println("  Topic Prefix: " + String(MQTT_TOPIC_PREFIX));
+    
+    // Set default values if none were loaded
+    mqtt_broker_ip = String(MQTT_BROKER);
+    mqtt_broker_port = MQTT_PORT;
+  }
   
   // Update MQTT client settings
-  mqtt_client.setServer(broker.c_str(), port);
+  mqtt_client.setServer(mqtt_broker_ip.c_str(), mqtt_broker_port);
   mqtt_client.setCallback(mqttCallback);
   mqtt_client.setKeepAlive(60);
   mqtt_client.setSocketTimeout(30);
   
-  // Update topic strings with loaded values
-  mqtt_base_topic = String(topic_prefix) + "/" + WiFi.macAddress();
+  // Update topic strings with current values
+  mqtt_base_topic = String(MQTT_TOPIC_PREFIX) + "/" + WiFi.macAddress();
   mqtt_sensor_topic = mqtt_base_topic + "/sensors";
   mqtt_turnout_topic = mqtt_base_topic + "/turnouts";
   mqtt_signal_topic = mqtt_base_topic + "/signals";
   mqtt_status_topic = mqtt_base_topic + "/status";
+  
+  Serial.println("Final MQTT configuration:");
+  Serial.println("  Broker: " + mqtt_broker_ip + ":" + String(mqtt_broker_port));
+  Serial.println("  Base Topic: " + mqtt_base_topic);
+  Serial.println("  Sensor Topic: " + mqtt_sensor_topic);
+  Serial.println("  Turnout Topic: " + mqtt_turnout_topic);
+  Serial.println("  Signal Topic: " + mqtt_signal_topic);
+  Serial.println("  Status Topic: " + mqtt_status_topic);
+  Serial.println("===============================");
 }
 
 void setupWebServer() {
@@ -329,6 +390,12 @@ void setupWebServer() {
   // Test endpoint for debugging
   web_server.on("/test", HTTP_GET, []() {
     web_server.send(200, "text/plain", "Web server is working! Firmware version: " + String(FIRMWARE_VERSION));
+  });
+  
+  // Clear MQTT credentials endpoint
+  web_server.on("/clear_mqtt", HTTP_POST, []() {
+    clearMQTTCredentials();
+    web_server.send(200, "text/plain", "MQTT credentials cleared. Device will use defaults on next restart.");
   });
   
   // OTA update page
@@ -417,6 +484,30 @@ void handleMQTT() {
   } else {
     mqtt_client.loop();
   }
+}
+
+void testMQTTBrokerConnectivity() {
+  Serial.println("=== Testing MQTT Broker Connectivity ===");
+  Serial.println("Broker: " + mqtt_broker_ip + ":" + String(mqtt_broker_port));
+  
+  // Create a temporary WiFi client to test connectivity
+  WiFiClient testClient;
+  
+  Serial.println("Attempting TCP connection to broker...");
+  if (testClient.connect(mqtt_broker_ip.c_str(), mqtt_broker_port)) {
+    Serial.println("✅ TCP connection to broker successful");
+    Serial.println("Broker is reachable on the network");
+    testClient.stop();
+  } else {
+    Serial.println("❌ TCP connection to broker failed");
+    Serial.println("Broker may be unreachable or port may be blocked");
+    Serial.println("Check:");
+    Serial.println("  - Broker IP address is correct");
+    Serial.println("  - Broker is running and listening on port " + String(mqtt_broker_port));
+    Serial.println("  - Network firewall allows connections to this port");
+    Serial.println("  - WiFi network can reach the broker subnet");
+  }
+  Serial.println("===============================");
 }
 
 void mqttReconnect() {
@@ -856,6 +947,7 @@ void handleRoot() {
   html += "        <div class=\"form-group\">";
   html += "            <button onclick=\"checkStatus()\">Check Status</button>";
   html += "            <button onclick=\"restart()\">Restart Device</button>";
+  html += "            <button onclick=\"clearMQTT()\" style=\"background-color: #f44336;\">Clear MQTT Credentials</button>";
   html += "        </div>";
   html += "        ";
   html += "        <div id=\"status\"></div>";
@@ -933,6 +1025,22 @@ void handleRoot() {
   html += "            }";
   html += "        }";
   html += "        ";
+  html += "        function clearMQTT() {";
+  html += "            if (confirm('Are you sure you want to clear MQTT credentials and revert to defaults?')) {";
+  html += "                fetch('/clear_mqtt', { method: 'POST' })";
+  html += "                .then(() => {";
+  html += "                    document.getElementById('status').innerHTML = '<div class=\"status success\">MQTT credentials cleared. Device will use defaults on next restart.</div>';";
+  html += "                    // Reload the page to reflect the change";
+  html += "                    setTimeout(function() {";
+  html += "                        window.location.reload();";
+  html += "                    }, 1000);";
+  html += "                })";
+  html += "                .catch(error => {";
+  html += "                    document.getElementById('status').innerHTML = '<div class=\"status error\">Error clearing MQTT credentials: ' + error + '</div>';";
+  html += "                });";
+  html += "            }";
+  html += "        }";
+  html += "        ";
   html += "        document.getElementById('updateForm').onsubmit = function(e) {";
   html += "            e.preventDefault();";
   html += "            ";
@@ -942,6 +1050,14 @@ void handleRoot() {
   html += "                return;";
   html += "            }";
   html += "            ";
+  html += "            // Show progress bar and status";
+  html += "            const progressBar = document.getElementById('progressBar');";
+  html += "            progressBar.style.display = 'block';";
+  html += "            progressBar.style.width = '0%';";
+  html += "            progressBar.textContent = '0%';";
+  html += "            ";
+  html += "            document.getElementById('status').innerHTML = '<div class=\"status\">Uploading firmware... <div id=\"progressBar\" style=\"width: 0%; height: 20px; background-color: #4CAF50; transition: width 0.3s; margin-top: 10px;\"></div></div>';";
+  html += "            ";
   html += "            const formData = new FormData();";
   html += "            formData.append('firmware', file);";
   html += "            ";
@@ -949,22 +1065,26 @@ void handleRoot() {
   html += "            ";
   html += "            xhr.upload.onprogress = function(e) {";
   html += "                if (e.lengthComputable) {";
-  html += "                    const percentComplete = (e.loaded / e.total) * 100;";
-  html += "                    document.getElementById('progressBar').style.width = percentComplete + '%';";
-  html += "                    document.getElementById('progressBar').textContent = percentComplete + '%';";
+  html += "                    const percentComplete = Math.round((e.loaded / e.total) * 100);";
+  html += "                    progressBar.style.width = percentComplete + '%';";
+  html += "                    progressBar.textContent = percentComplete + '%';";
+  html += "                    console.log('Upload progress:', percentComplete + '%');";
   html += "                }";
   html += "            };";
   html += "            ";
   html += "            xhr.onload = function() {";
   html += "                if (xhr.status === 200) {";
-  html += "                    document.getElementById('status').innerHTML = '<div style=\"color: green;\">Update successful! Device will restart.</div>';";
+  html += "                    document.getElementById('status').innerHTML = '<div class=\"status success\">' + xhr.responseText + '</div>';";
+  html += "                    progressBar.style.display = 'none';";
   html += "                } else {";
-  html += "                    document.getElementById('status').innerHTML = '<div style=\"color: red;\">Update failed: ' + xhr.responseText + '</div>';";
+  html += "                    document.getElementById('status').innerHTML = '<div class=\"status error\">Update failed: ' + xhr.responseText + '</div>';";
+  html += "                    progressBar.style.display = 'none';";
   html += "                }";
   html += "            };";
   html += "            ";
   html += "            xhr.onerror = function() {";
-  html += "                document.getElementById('status').innerHTML = '<div style=\"color: red;\">Update failed: Network error</div>';";
+  html += "                document.getElementById('status').innerHTML = '<div class=\"status error\">Update failed: Network error</div>';";
+  html += "                progressBar.style.display = 'none';";
   html += "            };";
   html += "            ";
   html += "            xhr.open('POST', '/doUpdate');";
@@ -1188,6 +1308,37 @@ void handleUpdatePage() {
   web_server.send(200, "text/html", html);
 }
 
+bool validateFirmwareFile(const String& filename, size_t fileSize) {
+  Serial.println("=== Validating Firmware File ===");
+  Serial.println("Filename: " + filename);
+  Serial.println("File size: " + String(fileSize) + " bytes");
+  
+  // Check file extension
+  if (!filename.endsWith(".bin")) {
+    Serial.println("❌ Error: File must have .bin extension");
+    return false;
+  }
+  
+  // Check minimum file size (ESP32 firmware should be at least 100KB)
+  if (fileSize < 100 * 1024) {
+    Serial.println("❌ Error: File too small for ESP32 firmware (minimum 100KB)");
+    return false;
+  }
+  
+  // Check maximum file size
+  size_t maxSize = ESP.getFreeSketchSpace() - 0x1000;
+  if (fileSize > maxSize) {
+    Serial.println("❌ Error: File too large for available flash space");
+    Serial.println("  File size: " + String(fileSize) + " bytes");
+    Serial.println("  Available: " + String(maxSize) + " bytes");
+    return false;
+  }
+  
+  Serial.println("✅ Firmware file validation passed");
+  Serial.println("===============================");
+  return true;
+}
+
 void handleDoUpdate() {
   web_server.sendHeader("Connection", "close");
   
@@ -1206,6 +1357,7 @@ void handleDoUpdate() {
 void handleUpdateBody() {
   static size_t totalSize = 0;
   static size_t currentSize = 0;
+  static bool updateStarted = false;
   
   // Get the firmware file from the request
   HTTPUpload& upload = web_server.upload();
@@ -1221,12 +1373,10 @@ void handleUpdateBody() {
     Serial.println("File name: " + upload.filename);
     Serial.println("File size: " + String(upload.totalSize));
     
-    // Validate file size
-    if (upload.totalSize == 0) {
-      Serial.println("❌ Error: File size is 0 - invalid upload");
-      web_server.send(400, "text/plain", "Error: Invalid file size (0 bytes)");
-      return;
-    }
+    // Reset state
+    totalSize = 0;
+    currentSize = 0;
+    updateStarted = false;
     
     // Print system information for debugging
     Serial.println("System Info:");
@@ -1235,33 +1385,46 @@ void handleUpdateBody() {
     Serial.println("  Flash Chip Size: " + String(ESP.getFlashChipSize()) + " bytes");
     Serial.println("  Max OTA Size: " + String(ESP.getFreeSketchSpace() - 0x1000) + " bytes");
     
-    // Check if we have enough space
-    if (upload.totalSize > (ESP.getFreeSketchSpace() - 0x1000)) {
-      String error_msg = "Not enough space to begin OTA. Need: " + String(upload.totalSize) + 
-                        " bytes, Available: " + String(ESP.getFreeSketchSpace() - 0x1000) + " bytes";
-      Serial.println("❌ " + error_msg);
-      web_server.send(400, "text/plain", error_msg);
-      return;
-    }
-    
-    // Begin the update
-    if (!Update.begin(upload.totalSize)) {
-      String error_msg = "Update begin failed: " + String(Update.errorString());
-      Serial.println("❌ " + error_msg);
-      web_server.send(400, "text/plain", error_msg);
-      return;
-    }
-    
-    totalSize = upload.totalSize;
-    currentSize = 0;
-    
-    Serial.println("✅ Update begin successful, total size: " + String(totalSize));
+    // Note: We'll start the update when we get the first data chunk
+    // since totalSize might be 0 at this point
     
   } else if (upload.status == UPLOAD_FILE_WRITE) {
     // Validate that we have data to write
     if (upload.currentSize == 0) {
       Serial.println("⚠️ Warning: Received 0 bytes in write chunk");
       return; // Skip this chunk but don't fail
+    }
+    
+    // If this is the first data chunk and we haven't started the update yet
+    if (!updateStarted) {
+      // Estimate total size from this chunk (this is a workaround for the 0 totalSize issue)
+      // We'll use a reasonable estimate based on the first chunk size
+      if (upload.totalSize == 0) {
+        // Estimate: assume file is at least 10x the first chunk size, but cap at max sketch space
+        totalSize = min((size_t)(upload.currentSize * 10), (size_t)(ESP.getFreeSketchSpace() - 0x1000));
+        Serial.println("⚠️ Warning: upload.totalSize is 0, estimating total size as: " + String(totalSize) + " bytes");
+      } else {
+        totalSize = upload.totalSize;
+      }
+      
+      // Validate the firmware file
+      if (!validateFirmwareFile(upload.filename, totalSize)) {
+        Serial.println("❌ Firmware validation failed, aborting update");
+        // Don't send response here as it might interfere with the upload
+        return;
+      }
+      
+      // Begin the update
+      Serial.println("Starting OTA update with estimated size: " + String(totalSize) + " bytes");
+      if (!Update.begin(totalSize)) {
+        String error_msg = "Update begin failed: " + String(Update.errorString());
+        Serial.println("❌ " + error_msg);
+        // Don't send response here as it might interfere with the upload
+        return;
+      }
+      
+      updateStarted = true;
+      Serial.println("✅ Update begin successful");
     }
     
     // Write the received data
