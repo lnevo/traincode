@@ -30,12 +30,13 @@ const char* default_password = DEFAULT_PASSWORD;
 String wifi_ssid = "";
 String wifi_password = "";
 
-// MQTT topics
-String mqtt_base_topic = String(MQTT_TOPIC_PREFIX) + "/" + WiFi.macAddress();
-String mqtt_sensor_topic = mqtt_base_topic + "/sensors";
-String mqtt_turnout_topic = mqtt_base_topic + "/turnouts";
-String mqtt_signal_topic = mqtt_base_topic + "/signals";
-String mqtt_status_topic = mqtt_base_topic + "/status";
+// MQTT topics - Updated to match JMRI format
+String mqtt_base_topic = String(MQTT_TOPIC_PREFIX) + "/";
+String mqtt_sensor_topic = mqtt_base_topic + "sensor/";
+String mqtt_turnout_topic = mqtt_base_topic + "turnout/";
+String mqtt_signal_topic = mqtt_base_topic + "signal/";
+String mqtt_light_topic = mqtt_base_topic + "light/";
+String mqtt_status_topic = mqtt_base_topic + "status/";
 
 // Global objects
 WiFiClient espClient;
@@ -245,11 +246,12 @@ void loadMQTTCredentials() {
     mqtt_broker_port = port;
     
     // Update topic strings
-    mqtt_base_topic = String(topic_prefix) + "/" + WiFi.macAddress();
-    mqtt_sensor_topic = mqtt_base_topic + "/sensors";
-    mqtt_turnout_topic = mqtt_base_topic + "/turnouts";
-    mqtt_signal_topic = mqtt_base_topic + "/signals";
-    mqtt_status_topic = mqtt_base_topic + "/status";
+    mqtt_base_topic = String(topic_prefix) + "/";
+    mqtt_sensor_topic = mqtt_base_topic + "sensor/";
+    mqtt_turnout_topic = mqtt_base_topic + "turnout/";
+    mqtt_signal_topic = mqtt_base_topic + "signal/";
+    mqtt_light_topic = mqtt_base_topic + "light/";
+    mqtt_status_topic = mqtt_base_topic + "status/";
     
     Serial.println("Updated topic strings:");
     Serial.println("  Base: " + mqtt_base_topic);
@@ -266,23 +268,6 @@ void loadMQTTCredentials() {
     Serial.println("  Topic Prefix: " + String(MQTT_TOPIC_PREFIX));
   }
   
-  Serial.println("===============================");
-}
-
-void clearMQTTCredentials() {
-  Serial.println("=== Clearing MQTT Credentials ===");
-  Serial.println("Removing saved MQTT settings from preferences");
-  
-  preferences.remove("mqtt_broker");
-  preferences.remove("mqtt_port");
-  preferences.remove("mqtt_client_id");
-  preferences.remove("mqtt_topic_prefix");
-  
-  // Reset stored values
-  mqtt_broker_ip = "";
-  mqtt_broker_port = 0;
-  
-  Serial.println("MQTT credentials cleared. Device will use defaults from config.h on next restart.");
   Serial.println("===============================");
 }
 
@@ -363,11 +348,12 @@ void setupMQTT() {
   mqtt_client.setSocketTimeout(30);
   
   // Update topic strings with current values
-  mqtt_base_topic = String(MQTT_TOPIC_PREFIX) + "/" + WiFi.macAddress();
-  mqtt_sensor_topic = mqtt_base_topic + "/sensors";
-  mqtt_turnout_topic = mqtt_base_topic + "/turnouts";
-  mqtt_signal_topic = mqtt_base_topic + "/signals";
-  mqtt_status_topic = mqtt_base_topic + "/status";
+  mqtt_base_topic = String(MQTT_TOPIC_PREFIX) + "/";
+  mqtt_sensor_topic = mqtt_base_topic + "sensor/";
+  mqtt_turnout_topic = mqtt_base_topic + "turnout/";
+  mqtt_signal_topic = mqtt_base_topic + "signal/";
+  mqtt_light_topic = mqtt_base_topic + "light/";
+  mqtt_status_topic = mqtt_base_topic + "status/";
   
   Serial.println("Final MQTT configuration:");
   Serial.println("  Broker: " + mqtt_broker_ip + ":" + String(mqtt_broker_port));
@@ -390,12 +376,6 @@ void setupWebServer() {
   // Test endpoint for debugging
   web_server.on("/test", HTTP_GET, []() {
     web_server.send(200, "text/plain", "Web server is working! Firmware version: " + String(FIRMWARE_VERSION));
-  });
-  
-  // Clear MQTT credentials endpoint
-  web_server.on("/clear_mqtt", HTTP_POST, []() {
-    clearMQTTCredentials();
-    web_server.send(200, "text/plain", "MQTT credentials cleared. Device will use defaults on next restart.");
   });
   
   // OTA update page
@@ -523,8 +503,8 @@ void mqttReconnect() {
     mqtt_connected = true;
     
     // Subscribe to control topics
-    String turnout_topic = mqtt_turnout_topic + "/+/control";
-    String signal_topic = mqtt_signal_topic + "/+/control";
+    String turnout_topic = mqtt_turnout_topic + "+";
+    String signal_topic = mqtt_signal_topic + "+";
     
     Serial.println("Subscribing to turnout topic: " + turnout_topic);
     mqtt_client.subscribe(turnout_topic.c_str());
@@ -569,81 +549,119 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.println("  Payload: " + payload_str);
   Serial.println("  Length: " + String(length) + " bytes");
   Serial.println("  From Broker: " + mqtt_broker_ip + ":" + String(mqtt_broker_port));
+  Serial.println("  Timestamp: " + String(millis()) + " ms");
   Serial.println("================================");
   
-  // Parse JSON payload
-  DynamicJsonDocument doc(256);
-  DeserializationError error = deserializeJson(doc, payload_str);
-  
-  if (error) {
-    Serial.println("JSON parsing failed: " + String(error.c_str()));
-    return;
+  // Handle turnout control - JMRI sends simple text commands
+  if (topic_str.indexOf("/turnout/") > 0) {
+    Serial.println("🎯 Processing turnout control message");
+    handleTurnoutControl(topic_str, payload_str);
   }
   
-  Serial.println("JSON parsed successfully");
-  
-  // Handle turnout control
-  if (topic_str.indexOf("/turnouts/") > 0) {
-    Serial.println("Processing turnout control message");
-    handleTurnoutControl(topic_str, doc);
-  }
-  
-  // Handle signal control
-  if (topic_str.indexOf("/signals/") > 0) {
-    Serial.println("Processing signal control message");
-    handleSignalControl(topic_str, doc);
+  // Handle signal control - JMRI sends simple text commands
+  if (topic_str.indexOf("/signal/") > 0) {
+    Serial.println("🎯 Processing signal control message");
+    handleSignalControl(topic_str, payload_str);
   }
 }
 
-void handleTurnoutControl(String topic, JsonDocument& doc) {
-  // Extract turnout number from topic
+void handleTurnoutControl(String topic, String payload) {
+  // Extract turnout number from topic (e.g., "track/turnout/1" -> turnout 1)
   int turnout_num = 0;
-  if (topic.indexOf("/turnouts/1/") > 0) turnout_num = 0;
-  else if (topic.indexOf("/turnouts/2/") > 0) turnout_num = 1;
+  
+  // Find the last number in the topic
+  int lastSlash = topic.lastIndexOf('/');
+  if (lastSlash > 0) {
+    String turnout_str = topic.substring(lastSlash + 1);
+    turnout_num = turnout_str.toInt() - 1;  // Convert to 0-based index
+  }
+  
+  // Validate turnout number
+  if (turnout_num < 0 || turnout_num > 1) {
+    Serial.println("❌ Error: Invalid turnout number: " + String(turnout_num + 1));
+    Serial.println("=====================");
+    return;
+  }
   
   Serial.println("=== Turnout Control ===");
   Serial.println("Turnout: " + String(turnout_num + 1));
   Serial.println("Topic: " + topic);
+  Serial.println("Payload: " + payload);
+  Serial.println("Current state: " + String(turnout_states[turnout_num] ? "THROWN" : "CLOSED"));
   
-  if (doc.containsKey("position")) {
-    String position = doc["position"].as<String>();
-    bool new_state = (position == "thrown" || position == "true");
+  bool state_changed = false;
+  
+  if (payload == "THROWN") {
+    Serial.println("🎯 Requested position: THROWN");
     
-    Serial.println("Requested position: " + position + " (state: " + (new_state ? "thrown" : "normal") + ")");
-    Serial.println("Current state: " + String(turnout_states[turnout_num] ? "thrown" : "normal"));
-    
-    if (turnout_num == 0) {
-      digitalWrite(TURNOUT_PIN_1, new_state ? HIGH : LOW);
-      turnout_states[0] = new_state;
-      Serial.println("Turnout 1 pin " + String(TURNOUT_PIN_1) + " set to " + (new_state ? "HIGH" : "LOW"));
-    } else if (turnout_num == 1) {
-      digitalWrite(TURNOUT_PIN_2, new_state ? HIGH : LOW);
-      turnout_states[1] = new_state;
-      Serial.println("Turnout 2 pin " + String(TURNOUT_PIN_2) + " set to " + (new_state ? "HIGH" : "LOW"));
+    if (turnout_states[turnout_num] != true) {  // Only change if state is different
+      state_changed = true;
+      
+      if (turnout_num == 0) {
+        digitalWrite(TURNOUT_PIN_1, HIGH);
+        turnout_states[0] = true;
+        Serial.println("✅ Turnout 1 pin " + String(TURNOUT_PIN_1) + " set to HIGH");
+      } else if (turnout_num == 1) {
+        digitalWrite(TURNOUT_PIN_2, HIGH);
+        turnout_states[1] = true;
+        Serial.println("✅ Turnout 2 pin " + String(TURNOUT_PIN_2) + " set to HIGH");
+      }
+      
+      Serial.println("✅ Turnout " + String(turnout_num + 1) + " moved to THROWN");
+    } else {
+      Serial.println("ℹ️ Turnout " + String(turnout_num + 1) + " already in THROWN position");
     }
     
-    Serial.println("Turnout " + String(turnout_num + 1) + " moved to " + (new_state ? "thrown" : "normal"));
+  } else if (payload == "CLOSED") {
+    Serial.println("🎯 Requested position: CLOSED");
     
-    // Publish status update
-    publishTurnoutStatus(turnout_num + 1);
+    if (turnout_states[turnout_num] != false) {  // Only change if state is different
+      state_changed = true;
+      
+      if (turnout_num == 0) {
+        digitalWrite(TURNOUT_PIN_1, LOW);
+        turnout_states[0] = false;
+        Serial.println("✅ Turnout 1 pin " + String(TURNOUT_PIN_1) + " set to LOW");
+      } else if (turnout_num == 1) {
+        digitalWrite(TURNOUT_PIN_2, LOW);
+        turnout_states[1] = false;
+        Serial.println("✅ Turnout 2 pin " + String(TURNOUT_PIN_2) + " set to LOW");
+      }
+      
+      Serial.println("✅ Turnout " + String(turnout_num + 1) + " moved to CLOSED");
+    } else {
+      Serial.println("ℹ️ Turnout " + String(turnout_num + 1) + " already in CLOSED position");
+    }
+    
   } else {
-    Serial.println("❌ No position specified in turnout control message");
+    Serial.println("❌ Unknown position specified in turnout control message: " + payload);
+    Serial.println("=====================");
+    return;
   }
+  
+  // Always publish status update after processing command
+  Serial.println("📤 Publishing status update...");
+  publishTurnoutStatus(turnout_num + 1);
+  
+  if (state_changed) {
+    Serial.println("🔄 State changed, publishing to JMRI");
+  } else {
+    Serial.println("ℹ️ No state change, but still publishing status to JMRI");
+  }
+  
   Serial.println("=====================");
 }
 
-void handleSignalControl(String topic, JsonDocument& doc) {
+void handleSignalControl(String topic, String payload) {
   Serial.println("=== Signal Control ===");
   Serial.println("Topic: " + topic);
+  Serial.println("Payload: " + payload);
   
-  if (doc.containsKey("aspect")) {
-    String aspect = doc["aspect"].as<String>();
-    int old_state = signal_state;
+  if (payload == "RED") {
+    Serial.println("Requested aspect: RED");
+    Serial.println("Current aspect: " + String(signal_state == 0 ? "red" : signal_state == 1 ? "yellow" : "green"));
     
-    Serial.println("Requested aspect: " + aspect);
-    Serial.println("Current aspect: " + String(old_state == 0 ? "red" : old_state == 1 ? "yellow" : "green"));
-    
-    if (aspect == "red") {
+    if (signal_state != 0) {
       signal_state = 0;
       digitalWrite(SIGNAL_PIN_RED, HIGH);
       digitalWrite(SIGNAL_PIN_YELLOW, LOW);
@@ -651,7 +669,18 @@ void handleSignalControl(String topic, JsonDocument& doc) {
       Serial.println("Signal pin " + String(SIGNAL_PIN_RED) + " set to HIGH (RED)");
       Serial.println("Signal pin " + String(SIGNAL_PIN_YELLOW) + " set to LOW");
       Serial.println("Signal pin " + String(SIGNAL_PIN_GREEN) + " set to LOW");
-    } else if (aspect == "yellow") {
+    }
+    
+    Serial.println("Signal changed from " + String(signal_state == 0 ? "red" : signal_state == 1 ? "yellow" : "green") + 
+                  " to RED");
+    
+    // Publish status update
+    publishSignalStatus();
+  } else if (payload == "YELLOW") {
+    Serial.println("Requested aspect: YELLOW");
+    Serial.println("Current aspect: " + String(signal_state == 0 ? "red" : signal_state == 1 ? "yellow" : "green"));
+    
+    if (signal_state != 1) {
       signal_state = 1;
       digitalWrite(SIGNAL_PIN_RED, LOW);
       digitalWrite(SIGNAL_PIN_YELLOW, HIGH);
@@ -659,7 +688,18 @@ void handleSignalControl(String topic, JsonDocument& doc) {
       Serial.println("Signal pin " + String(SIGNAL_PIN_RED) + " set to LOW");
       Serial.println("Signal pin " + String(SIGNAL_PIN_YELLOW) + " set to HIGH (YELLOW)");
       Serial.println("Signal pin " + String(SIGNAL_PIN_GREEN) + " set to LOW");
-    } else if (aspect == "green") {
+    }
+    
+    Serial.println("Signal changed from " + String(signal_state == 0 ? "red" : signal_state == 1 ? "yellow" : "green") + 
+                  " to YELLOW");
+    
+    // Publish status update
+    publishSignalStatus();
+  } else if (payload == "GREEN") {
+    Serial.println("Requested aspect: GREEN");
+    Serial.println("Current aspect: " + String(signal_state == 0 ? "red" : signal_state == 1 ? "yellow" : "green"));
+    
+    if (signal_state != 2) {
       signal_state = 2;
       digitalWrite(SIGNAL_PIN_RED, LOW);
       digitalWrite(SIGNAL_PIN_YELLOW, LOW);
@@ -669,13 +709,13 @@ void handleSignalControl(String topic, JsonDocument& doc) {
       Serial.println("Signal pin " + String(SIGNAL_PIN_GREEN) + " set to HIGH (GREEN)");
     }
     
-    Serial.println("Signal changed from " + String(old_state == 0 ? "red" : old_state == 1 ? "yellow" : "green") + 
-                  " to " + aspect);
+    Serial.println("Signal changed from " + String(signal_state == 0 ? "red" : signal_state == 1 ? "yellow" : "green") + 
+                  " to GREEN");
     
     // Publish status update
     publishSignalStatus();
   } else {
-    Serial.println("❌ No aspect specified in signal control message");
+    Serial.println("❌ Unknown aspect specified in signal control message: " + payload);
   }
   Serial.println("===================");
 }
@@ -692,8 +732,8 @@ void handleSensors() {
     if (sensor_states[i] != last_sensor_states[i]) {
       Serial.println("=== Sensor State Change ===");
       Serial.println("Sensor " + String(i + 1) + " changed from " + 
-                    (last_sensor_states[i] ? "occupied" : "clear") + 
-                    " to " + (sensor_states[i] ? "occupied" : "clear"));
+                    (last_sensor_states[i] ? "ACTIVE" : "INACTIVE") + 
+                    " to " + (sensor_states[i] ? "ACTIVE" : "INACTIVE"));
       Serial.println("Pin: " + String(i == 0 ? SENSOR_PIN_1 : i == 1 ? SENSOR_PIN_2 : i == 2 ? SENSOR_PIN_3 : SENSOR_PIN_4));
       Serial.println("==========================");
       
@@ -706,58 +746,43 @@ void handleSensors() {
 void publishSensorStatus(int sensor_num) {
   if (!mqtt_connected) return;
   
-  DynamicJsonDocument doc(128);
-  doc["sensor"] = sensor_num;
-  doc["state"] = sensor_states[sensor_num - 1] ? "occupied" : "clear";
-  doc["timestamp"] = millis();
+  // JMRI expects simple text messages, not JSON
+  String state = sensor_states[sensor_num - 1] ? "ACTIVE" : "INACTIVE";
+  String topic = mqtt_sensor_topic + String(sensor_num) + "/status";
   
-  String json_string;
-  serializeJson(doc, json_string);
+  mqtt_client.publish(topic.c_str(), state.c_str());
   
-  String topic = mqtt_sensor_topic + "/" + String(sensor_num) + "/status";
-  mqtt_client.publish(topic.c_str(), json_string.c_str());
-  
-  Serial.println("Published sensor " + String(sensor_num) + " status: " + json_string);
+  Serial.println("Published sensor " + String(sensor_num) + " status: " + state + " to topic: " + topic);
 }
 
 void publishTurnoutStatus(int turnout_num) {
   if (!mqtt_connected) return;
   
-  DynamicJsonDocument doc(128);
-  doc["turnout"] = turnout_num;
-  doc["position"] = turnout_states[turnout_num - 1] ? "thrown" : "normal";
-  doc["timestamp"] = millis();
+  // JMRI expects simple text messages, not JSON
+  String position = turnout_states[turnout_num - 1] ? "THROWN" : "CLOSED";
+  String topic = mqtt_turnout_topic + String(turnout_num) + "/status";
   
-  String json_string;
-  serializeJson(doc, json_string);
+  mqtt_client.publish(topic.c_str(), position.c_str());
   
-  String topic = mqtt_turnout_topic + "/" + String(turnout_num) + "/status";
-  mqtt_client.publish(topic.c_str(), json_string.c_str());
-  
-  Serial.println("Published turnout " + String(turnout_num) + " status: " + json_string);
+  Serial.println("Published turnout " + String(turnout_num) + " status: " + position + " to topic: " + topic);
 }
 
 void publishSignalStatus() {
   if (!mqtt_connected) return;
   
-  DynamicJsonDocument doc(128);
-  doc["signal"] = 1;
-  doc["aspect"] = (signal_state == 0) ? "red" : (signal_state == 1) ? "yellow" : "green";
-  doc["timestamp"] = millis();
+  // JMRI expects simple text messages, not JSON
+  String aspect = (signal_state == 0) ? "RED" : (signal_state == 1) ? "YELLOW" : "GREEN";
+  String topic = mqtt_signal_topic + "1/status";
   
-  String json_string;
-  serializeJson(doc, json_string);
+  mqtt_client.publish(topic.c_str(), aspect.c_str());
   
-  String topic = mqtt_signal_topic + "/1/status";
-  mqtt_client.publish(topic.c_str(), json_string.c_str());
-  
-  Serial.println("Published signal status: " + json_string);
+  Serial.println("Published signal status: " + aspect + " to topic: " + topic);
 }
 
 void publishInitialStatus() {
   if (!mqtt_connected) return;
   
-  Serial.println("=== Publishing Initial Status for All Devices ===");
+  Serial.println("=== Publishing Initial Status for All Devices to JMRI ===");
   
   // Publish individual sensor statuses
   for (int i = 1; i <= 4; i++) {
@@ -777,7 +802,7 @@ void publishInitialStatus() {
   // Publish overall device status
   publishStatus();
   
-  Serial.println("=== Initial Status Published for All Devices ===");
+  Serial.println("=== Initial Status Published for All Devices to JMRI ===");
 }
 
 void publishAllDeviceStatus() {
@@ -811,36 +836,12 @@ void publishStatus() {
   
   Serial.println("=== Publishing Device Status ===");
   
-  DynamicJsonDocument doc(512);
-  doc["device"] = DEVICE_NAME;
-  doc["version"] = FIRMWARE_VERSION;
-  doc["ip"] = WiFi.localIP().toString();
-  doc["rssi"] = WiFi.RSSI();
-  doc["uptime"] = millis();
-  
-  // Add sensor states
-  JsonArray sensors = doc.createNestedArray("sensors");
-  for (int i = 0; i < 4; i++) {
-    JsonObject sensor = sensors.createNestedObject();
-    sensor["id"] = i + 1;
-    sensor["state"] = sensor_states[i] ? "occupied" : "clear";
-  }
-  
-  // Add turnout states
-  JsonArray turnouts = doc.createNestedArray("turnouts");
-  for (int i = 0; i < 2; i++) {
-    JsonObject turnout = turnouts.createNestedObject();
-    turnout["id"] = i + 1;
-    turnout["position"] = turnout_states[i] ? "thrown" : "normal";
-  }
-  
-  // Add signal state
-  JsonObject signal = doc.createNestedObject("signal");
-  signal["id"] = 1;
-  signal["aspect"] = (signal_state == 0) ? "red" : (signal_state == 1) ? "yellow" : "green";
-  
-  String json_string;
-  serializeJson(doc, json_string);
+  // JMRI expects simple text status, not JSON
+  String status_msg = "Device: " + String(DEVICE_NAME) + 
+                     ", Version: " + String(FIRMWARE_VERSION) + 
+                     ", IP: " + WiFi.localIP().toString() + 
+                     ", RSSI: " + String(WiFi.RSSI()) + " dBm" +
+                     ", Uptime: " + String(millis()) + " ms";
   
   Serial.println("Device: " + String(DEVICE_NAME));
   Serial.println("Version: " + String(FIRMWARE_VERSION));
@@ -855,10 +856,10 @@ void publishStatus() {
                 String(turnout_states[1] ? "T" : "N") + " (T=Thrown, N=Normal)");
   Serial.println("Signal: " + String(signal_state == 0 ? "RED" : signal_state == 1 ? "YELLOW" : "GREEN"));
   
-  mqtt_client.publish(mqtt_status_topic.c_str(), json_string.c_str());
+  mqtt_client.publish(mqtt_status_topic.c_str(), status_msg.c_str());
   
   Serial.println("Status published to topic: " + mqtt_status_topic);
-  Serial.println("JSON: " + json_string);
+  Serial.println("Message: " + status_msg);
   Serial.println("===============================");
 }
 
@@ -870,229 +871,120 @@ void updateStatus() {
 
 // Web server handlers
 void handleRoot() {
-  // Load current MQTT settings for form pre-population
-  String current_broker = preferences.getString("mqtt_broker", MQTT_BROKER);
-  int current_port = preferences.getInt("mqtt_port", MQTT_PORT);
-  String current_client_id = preferences.getString("mqtt_client_id", MQTT_CLIENT_ID);
-  String current_topic_prefix = preferences.getString("mqtt_topic_prefix", MQTT_TOPIC_PREFIX);
+  String html = "<!DOCTYPE html><html><head>";
+  html += "<title>ESP32 JMRI Client</title>";
+  html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
+  html += "<style>";
+  html += "body{font-family:Arial,sans-serif;margin:20px;background-color:#f5f5f5;}";
+  html += ".container{max-width:800px;margin:0 auto;background:white;padding:20px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,0.1);}";
+  html += "h1{color:#333;text-align:center;}";
+  html += ".section{margin:20px 0;padding:20px;border:1px solid #ddd;border-radius:4px;}";
+  html += ".form-group{margin-bottom:15px;}";
+  html += "label{display:block;margin-bottom:5px;font-weight:bold;}";
+  html += "input[type=text],input[type=password]{width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;}";
+  html += "button{background-color:#4CAF50;color:white;padding:10px 20px;border:none;border-radius:4px;cursor:pointer;margin:5px;}";
+  html += "button:hover{background-color:#45a049;}";
+  html += ".button-group{text-align:center;margin:20px 0;}";
+  html += ".status{margin:10px 0;padding:10px;border-radius:4px;}";
+  html += ".success{background-color:#d4edda;color:#155724;border:1px solid #c3e6cb;}";
+  html += ".error{background-color:#f8d7da;color:#721c24;border:1px solid #f5c6cb;}";
+  html += ".info{background-color:#d1ecf1;color:#0c5460;border:1px solid #bee5eb;}";
+  html += "</style>";
+  html += "</head><body>";
+  html += "<div class=\"container\">";
+  html += "<h1>ESP32 JMRI Client Configuration</h1>";
+  html += "<div id=\"status\"></div>";
   
-  // Get system information for debugging
-  size_t freeSketchSpace = ESP.getFreeSketchSpace();
-  size_t freeHeap = ESP.getFreeHeap();
-  uint32_t flashChipSize = ESP.getFlashChipSize();
-  String sdkVersion = ESP.getSdkVersion();
+  // WiFi Configuration Section
+  html += "<div class=\"section\">";
+  html += "<h2>WiFi Configuration</h2>";
+  html += "<form id=\"wifiForm\">";
+  html += "<div class=\"form-group\">";
+  html += "<label for=\"ssid\">WiFi SSID:</label>";
+  html += "<input type=\"text\" id=\"ssid\" name=\"ssid\" value=\"" + wifi_ssid + "\" required>";
+  html += "</div>";
+  html += "<div class=\"form-group\">";
+  html += "<label for=\"password\">WiFi Password:</label>";
+  html += "<input type=\"password\" id=\"password\" name=\"password\" value=\"" + wifi_password + "\" required>";
+  html += "</div>";
+  html += "<button type=\"submit\">Update WiFi</button>";
+  html += "</form>";
+  html += "</div>";
   
-  String html = "<!DOCTYPE html>";
-  html += "<html>";
-  html += "<head>";
-  html += "    <title>ESP32 JMRI Client Configuration</title>";
-  html += "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
-  html += "    <style>";
-  html += "        body { font-family: Arial, sans-serif; margin: 20px; }";
-  html += "        .container { max-width: 600px; margin: 0 auto; }";
-  html += "        .form-group { margin-bottom: 15px; }";
-  html += "        label { display: block; margin-bottom: 5px; font-weight: bold; }";
-  html += "        input[type=\"text\"], input[type=\"password\"] { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }";
-  html += "        button { background-color: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; }";
-  html += "        button:hover { background-color: #45a049; }";
-  html += "        .status { margin-top: 20px; padding: 10px; border-radius: 4px; }";
-  html += "        .success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }";
-  html += "        .error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }";
-  html += "        h3 { margin-top: 30px; margin-bottom: 15px; color: #333; border-bottom: 2px solid #4CAF50; padding-bottom: 5px; }";
-  html += "    </style>";
-  html += "</head>";
-  html += "<body>";
-  html += "    <div class=\"container\">";
-  html += "        <h1>ESP32 JMRI Client Configuration</h1>";
-  html += "        ";
-  html += "        <form id=\"wifiForm\">";
-  html += "            <div class=\"form-group\">";
-  html += "                <label for=\"ssid\">WiFi SSID:</label>";
-  html += "                <input type=\"text\" id=\"ssid\" name=\"ssid\" value=\"" + wifi_ssid + "\" required>";
-  html += "            </div>";
-  html += "            ";
-  html += "            <div class=\"form-group\">";
-  html += "                <label for=\"password\">WiFi Password:</label>";
-  html += "                <input type=\"password\" id=\"password\" name=\"password\" value=\"" + wifi_password + "\" required>";
-  html += "            </div>";
-  html += "            ";
-  html += "            <button type=\"submit\">Save WiFi Configuration</button>";
-  html += "        </form>";
-  html += "        ";
-  html += "        <h3>MQTT Configuration</h3>";
-  html += "        <form id=\"mqttForm\">";
-  html += "            <div class=\"form-group\">";
-  html += "                <label for=\"mqtt_broker\">MQTT Broker IP:</label>";
-  html += "                <input type=\"text\" id=\"mqtt_broker\" name=\"mqtt_broker\" value=\"" + current_broker + "\" required>";
-  html += "            </div>";
-  html += "            ";
-  html += "            <div class=\"form-group\">";
-  html += "                <label for=\"mqtt_port\">MQTT Port:</label>";
-  html += "                <input type=\"number\" id=\"mqtt_port\" name=\"mqtt_port\" value=\"" + String(current_port) + "\" min=\"1\" max=\"65535\" required>";
-  html += "            </div>";
-  html += "            ";
-  html += "            <div class=\"form-group\">";
-  html += "                <label for=\"mqtt_client_id\">MQTT Client ID:</label>";
-  html += "                <input type=\"text\" id=\"mqtt_client_id\" name=\"mqtt_client_id\" value=\"" + current_client_id + "\" required>";
-  html += "            </div>";
-  html += "            ";
-  html += "            <div class=\"form-group\">";
-  html += "                <label for=\"mqtt_topic_prefix\">MQTT Topic Prefix:</label>";
-  html += "                <input type=\"text\" id=\"mqtt_topic_prefix\" name=\"mqtt_topic_prefix\" value=\"" + current_topic_prefix + "\" required>";
-  html += "            </div>";
-  html += "            ";
-  html += "            <button type=\"submit\">Save MQTT Configuration</button>";
-  html += "        </form>";
-  html += "        ";
-  html += "        <div class=\"form-group\">";
-  html += "            <button onclick=\"checkStatus()\">Check Status</button>";
-  html += "            <button onclick=\"restart()\">Restart Device</button>";
-  html += "            <button onclick=\"clearMQTT()\" style=\"background-color: #f44336;\">Clear MQTT Credentials</button>";
-  html += "        </div>";
-  html += "        ";
-  html += "        <div id=\"status\"></div>";
-  html += "        ";
-  html += "        <div class=\"form-group\">";
-  html += "            <h3>OTA Update</h3>";
-  html += "            <form id=\"updateForm\" enctype=\"multipart/form-data\">";
-  html += "                <input type=\"file\" id=\"firmware\" name=\"firmware\" accept=\".bin\" required>";
-  html += "                <button type=\"submit\">Upload Firmware</button>";
-  html += "            </form>";
-  html += "            <div id=\"progressBar\" style=\"width: 0%; height: 20px; background-color: #4CAF50; transition: width 0.3s; margin-top: 10px; display: none;\"></div>";
-  html += "        </div>";
-  html += "    </div>";
-  html += "    ";
-  html += "    <script>";
-  html += "        document.getElementById('wifiForm').onsubmit = function(e) {";
-  html += "            e.preventDefault();";
-  html += "            ";
-  html += "            const formData = new FormData();";
-  html += "            formData.append('ssid', document.getElementById('ssid').value);";
-  html += "            formData.append('password', document.getElementById('password').value);";
-  html += "            ";
-  html += "            fetch('/configure', {";
-  html += "                method: 'POST',";
-  html += "                body: formData";
-  html += "            })";
-  html += "            .then(response => response.text())";
-  html += "            .then(data => {";
-  html += "                document.getElementById('status').innerHTML = '<div class=\"status success\">' + data + '</div>';";
-  html += "            })";
-  html += "            .catch(error => {";
-  html += "                document.getElementById('status').innerHTML = '<div class=\"status error\">Error: ' + error + '</div>';";
-  html += "            });";
-  html += "        };";
-  html += "        ";
-  html += "        document.getElementById('mqttForm').onsubmit = function(e) {";
-  html += "            e.preventDefault();";
-  html += "            ";
-  html += "            const formData = new FormData();";
-  html += "            formData.append('mqtt_broker', document.getElementById('mqtt_broker').value);";
-  html += "            formData.append('mqtt_port', document.getElementById('mqtt_port').value);";
-  html += "            formData.append('mqtt_client_id', document.getElementById('mqtt_client_id').value);";
-  html += "            formData.append('mqtt_topic_prefix', document.getElementById('mqtt_topic_prefix').value);";
-  html += "            ";
-  html += "            fetch('/configure_mqtt', {";
-  html += "                method: 'POST',";
-  html += "                body: formData";
-  html += "            })";
-  html += "            .then(response => response.text())";
-  html += "            .then(data => {";
-  html += "                document.getElementById('status').innerHTML = '<div class=\"status success\">' + data + '</div>';";
-  html += "            })";
-  html += "            .catch(error => {";
-  html += "                document.getElementById('status').innerHTML = '<div class=\"status error\">Error: ' + error + '</div>';";
-  html += "            });";
-  html += "        };";
-  html += "        ";
-  html += "        function checkStatus() {";
-  html += "            fetch('/status')";
-  html += "            .then(response => response.json())";
-  html += "            .then(data => {";
-  html += "                document.getElementById('status').innerHTML = '<div class=\"status success\"><pre>' + JSON.stringify(data, null, 2) + '</pre></div>';";
-  html += "            })";
-  html += "            .catch(error => {";
-  html += "                document.getElementById('status').innerHTML = '<div class=\"status error\">Error: ' + error + '</div>';";
-  html += "            });";
-  html += "        }";
-  html += "        ";
-  html += "        function restart() {";
-  html += "            if (confirm('Are you sure you want to restart the device?')) {";
-  html += "                fetch('/restart', { method: 'POST' })";
-  html += "                .then(() => {";
-  html += "                    document.getElementById('status').innerHTML = '<div class=\"status success\">Device restarting...</div>';";
-  html += "            });";
-  html += "            }";
-  html += "        }";
-  html += "        ";
-  html += "        function clearMQTT() {";
-  html += "            if (confirm('Are you sure you want to clear MQTT credentials and revert to defaults?')) {";
-  html += "                fetch('/clear_mqtt', { method: 'POST' })";
-  html += "                .then(() => {";
-  html += "                    document.getElementById('status').innerHTML = '<div class=\"status success\">MQTT credentials cleared. Device will use defaults on next restart.</div>';";
-  html += "                    // Reload the page to reflect the change";
-  html += "                    setTimeout(function() {";
-  html += "                        window.location.reload();";
-  html += "                    }, 1000);";
-  html += "                })";
-  html += "                .catch(error => {";
-  html += "                    document.getElementById('status').innerHTML = '<div class=\"status error\">Error clearing MQTT credentials: ' + error + '</div>';";
-  html += "                });";
-  html += "            }";
-  html += "        }";
-  html += "        ";
-  html += "        document.getElementById('updateForm').onsubmit = function(e) {";
-  html += "            e.preventDefault();";
-  html += "            ";
-  html += "            const file = document.getElementById('firmware').files[0];";
-  html += "            if (!file) {";
-  html += "                alert('Please select a file');";
-  html += "                return;";
-  html += "            }";
-  html += "            ";
-  html += "            // Show progress bar and status";
-  html += "            const progressBar = document.getElementById('progressBar');";
-  html += "            progressBar.style.display = 'block';";
-  html += "            progressBar.style.width = '0%';";
-  html += "            progressBar.textContent = '0%';";
-  html += "            ";
-  html += "            document.getElementById('status').innerHTML = '<div class=\"status\">Uploading firmware... <div id=\"progressBar\" style=\"width: 0%; height: 20px; background-color: #4CAF50; transition: width 0.3s; margin-top: 10px;\"></div></div>';";
-  html += "            ";
-  html += "            const formData = new FormData();";
-  html += "            formData.append('firmware', file);";
-  html += "            ";
-  html += "            const xhr = new XMLHttpRequest();";
-  html += "            ";
-  html += "            xhr.upload.onprogress = function(e) {";
-  html += "                if (e.lengthComputable) {";
-  html += "                    const percentComplete = Math.round((e.loaded / e.total) * 100);";
-  html += "                    progressBar.style.width = percentComplete + '%';";
-  html += "                    progressBar.textContent = percentComplete + '%';";
-  html += "                    console.log('Upload progress:', percentComplete + '%');";
-  html += "                }";
-  html += "            };";
-  html += "            ";
-  html += "            xhr.onload = function() {";
-  html += "                if (xhr.status === 200) {";
-  html += "                    document.getElementById('status').innerHTML = '<div class=\"status success\">' + xhr.responseText + '</div>';";
-  html += "                    progressBar.style.display = 'none';";
-  html += "                } else {";
-  html += "                    document.getElementById('status').innerHTML = '<div class=\"status error\">Update failed: ' + xhr.responseText + '</div>';";
-  html += "                    progressBar.style.display = 'none';";
-  html += "                }";
-  html += "            };";
-  html += "            ";
-  html += "            xhr.onerror = function() {";
-  html += "                document.getElementById('status').innerHTML = '<div class=\"status error\">Update failed: Network error</div>';";
-  html += "                progressBar.style.display = 'none';";
-  html += "            };";
-  html += "            ";
-  html += "            xhr.open('POST', '/doUpdate');";
-  html += "            xhr.send(formData);";
-  html += "        };";
-  html += "    </script>";
-  html += "</body>";
-  html += "</html>";
+  // MQTT Configuration Section
+  html += "<div class=\"section\">";
+  html += "<h2>MQTT Configuration</h2>";
+  html += "<form id=\"mqttForm\">";
+  html += "<div class=\"form-group\">";
+  html += "<label for=\"mqtt_broker\">MQTT Broker IP:</label>";
+  html += "<input type=\"text\" id=\"mqtt_broker\" name=\"mqtt_broker\" value=\"" + mqtt_broker_ip + "\" required>";
+  html += "</div>";
+  html += "<div class=\"form-group\">";
+  html += "<label for=\"mqtt_port\">MQTT Port:</label>";
+  html += "<input type=\"text\" id=\"mqtt_port\" name=\"mqtt_port\" value=\"" + String(mqtt_broker_port) + "\" required>";
+  html += "</div>";
+  html += "<div class=\"form-group\">";
+  html += "<label for=\"mqtt_client_id\">Client ID:</label>";
+  html += "<input type=\"text\" id=\"mqtt_client_id\" name=\"mqtt_client_id\" value=\"" + String(MQTT_CLIENT_ID) + "\" required>";
+  html += "</div>";
+  html += "<div class=\"form-group\">";
+  html += "<label for=\"mqtt_topic_prefix\">Topic Prefix:</label>";
+  html += "<input type=\"text\" id=\"mqtt_topic_prefix\" name=\"mqtt_topic_prefix\" value=\"" + String(MQTT_TOPIC_PREFIX) + "\" required>";
+  html += "</div>";
+  html += "<button type=\"submit\">Update MQTT</button>";
+  html += "</form>";
+  html += "</div>";
+  
+  // Action Buttons
+  html += "<div class=\"button-group\">";
+  html += "<button onclick=\"checkStatus()\">Check Status</button>";
+  html += "<a href=\"/update\" style=\"text-decoration:none;\"><button type=\"button\" style=\"background-color:#2196F3;\">Firmware Update</button></a>";
+  html += "</div>";
+  
+  html += "</div>";
+  html += "<script>";
+  html += "document.getElementById('wifiForm').onsubmit = function(e) {";
+  html += "    e.preventDefault();";
+  html += "    const formData = new FormData();";
+  html += "    formData.append('ssid', document.getElementById('ssid').value);";
+  html += "    formData.append('password', document.getElementById('password').value);";
+  html += "    fetch('/configure', { method: 'POST', body: formData })";
+  html += "    .then(response => response.text())";
+  html += "    .then(data => {";
+  html += "        document.getElementById('status').innerHTML = '<div class=\"status success\">' + data + '</div>';";
+  html += "    })";
+  html += "    .catch(error => {";
+  html += "        document.getElementById('status').innerHTML = '<div class=\"status error\">Error: ' + error + '</div>';";
+  html += "    });";
+  html += "};";
+  html += "document.getElementById('mqttForm').onsubmit = function(e) {";
+  html += "    e.preventDefault();";
+  html += "    const formData = new FormData();";
+  html += "    formData.append('mqtt_broker', document.getElementById('mqtt_broker').value);";
+  html += "    formData.append('mqtt_port', document.getElementById('mqtt_port').value);";
+  html += "    formData.append('mqtt_client_id', document.getElementById('mqtt_client_id').value);";
+  html += "    formData.append('mqtt_topic_prefix', document.getElementById('mqtt_topic_prefix').value);";
+  html += "    fetch('/configure_mqtt', { method: 'POST', body: formData })";
+  html += "    .then(response => response.text())";
+  html += "    .then(data => {";
+  html += "        document.getElementById('status').innerHTML = '<div class=\"status success\">' + data + '</div>';";
+  html += "    })";
+  html += "    .catch(error => {";
+  html += "        document.getElementById('status').innerHTML = '<div class=\"status error\">Error: ' + error + '</div>';";
+  html += "    });";
+  html += "};";
+  html += "function checkStatus() {";
+  html += "    fetch('/status')";
+  html += "    .then(response => response.text())";
+  html += "    .then(data => {";
+  html += "        document.getElementById('status').innerHTML = '<div class=\"status success\">' + data + '</div>';";
+  html += "    })";
+  html += "    .catch(error => {";
+  html += "        document.getElementById('status').innerHTML = '<div class=\"status error\">Error: ' + error + '</div>';";
+  html += "    });";
+  html += "}";
+  html += "</script>";
+  html += "</body></html>";
   
   web_server.send(200, "text/html", html);
 }
@@ -1148,11 +1040,12 @@ void handleMQTTConfig() {
     mqtt_broker_port = new_port;
     
     // Update topic strings
-    mqtt_base_topic = String(new_topic_prefix) + "/" + WiFi.macAddress();
-    mqtt_sensor_topic = mqtt_base_topic + "/sensors";
-    mqtt_turnout_topic = mqtt_base_topic + "/turnouts";
-    mqtt_signal_topic = mqtt_base_topic + "/signals";
-    mqtt_status_topic = mqtt_base_topic + "/status";
+    mqtt_base_topic = String(new_topic_prefix) + "/";
+    mqtt_sensor_topic = mqtt_base_topic + "sensor/";
+    mqtt_turnout_topic = mqtt_base_topic + "turnout/";
+    mqtt_signal_topic = mqtt_base_topic + "signal/";
+    mqtt_light_topic = mqtt_base_topic + "light/";
+    mqtt_status_topic = mqtt_base_topic + "status/";
 
     Serial.println("Updated topic strings:");
     Serial.println("  Base: " + mqtt_base_topic);
@@ -1174,8 +1067,8 @@ void handleMQTTConfig() {
       mqtt_connected = true;
       
       // Resubscribe to control topics
-      String turnout_topic = mqtt_turnout_topic + "/+/control";
-      String signal_topic = mqtt_signal_topic + "/+/control";
+      String turnout_topic = mqtt_turnout_topic + "+";
+      String signal_topic = mqtt_signal_topic + "+";
       
       Serial.println("Resubscribing to turnout topic: " + turnout_topic);
       mqtt_client.subscribe(turnout_topic.c_str());
@@ -1230,113 +1123,103 @@ void handleRestart() {
 }
 
 void handleUpdatePage() {
-  String html = "<!DOCTYPE html>";
-  html += "<html>";
-  html += "<head>";
-  html += "    <title>OTA Update</title>";
-  html += "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
-  html += "    <style>";
-  html += "        body { font-family: Arial, sans-serif; margin: 20px; }";
-  html += "        .container { max-width: 600px; margin: 0 auto; }";
-  html += "        .form-group { margin-bottom: 15px; }";
-  html += "        input[type=\"file\"] { margin-bottom: 10px; }";
-  html += "        button { background-color: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; }";
-  html += "        .progress { width: 100%; background-color: #f0f0f0; border-radius: 4px; margin: 10px 0; }";
-  html += "        .progress-bar { height: 20px; background-color: #4CAF50; border-radius: 4px; width: 0%; transition: width 0.3s; }";
-  html += "    </style>";
-  html += "</head>";
-  html += "<body>";
-  html += "    <div class=\"container\">";
-  html += "        <h1>OTA Firmware Update</h1>";
-  html += "        <form id=\"updateForm\" enctype=\"multipart/form-data\">";
-  html += "            <div class=\"form-group\">";
-  html += "                <label for=\"firmware\">Select firmware file (.bin):</label>";
-  html += "                <input type=\"file\" id=\"firmware\" name=\"firmware\" accept=\".bin\" required>";
-  html += "            </div>";
-  html += "            <button type=\"submit\">Upload Firmware</button>";
-  html += "        </form>";
-  html += "        ";
-  html += "        <div class=\"progress\">";
-  html += "            <div class=\"progress-bar\" id=\"progressBar\"></div>";
-  html += "        </div>";
-  html += "        ";
-  html += "        <div id=\"status\"></div>";
-  html += "    </div>";
+  String html = "<!DOCTYPE html><html><head>";
+  html += "<title>Firmware Update</title>";
+  html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
+  html += "<style>";
+  html += "body{font-family:Arial,sans-serif;margin:20px;background-color:#f5f5f5;}";
+  html += ".container{max-width:600px;margin:0 auto;background:white;padding:20px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,0.1);}";
+  html += "h1{color:#333;text-align:center;}";
+  html += ".upload-form{margin:20px 0;}";
+  html += "input[type=file]{width:100%;padding:10px;margin:10px 0;border:2px dashed #ddd;border-radius:4px;}";
+  html += "button{background-color:#4CAF50;color:white;padding:12px 24px;border:none;border-radius:4px;cursor:pointer;font-size:16px;width:100%;margin:10px 0;}";
+  html += "button:hover{background-color:#45a049;}";
+  html += "button:disabled{background-color:#cccccc;cursor:not-allowed;}";
+  html += ".progress{width:100%;background-color:#f0f0f0;border-radius:4px;margin:10px 0;}";
+  html += ".progress-bar{height:20px;background-color:#4CAF50;border-radius:4px;width:0%;transition:width 0.3s;}";
+  html += ".status{text-align:center;margin:10px 0;padding:10px;border-radius:4px;}";
+  html += ".success{background-color:#d4edda;color:#155724;border:1px solid #c3e6cb;}";
+  html += ".error{background-color:#f8d7da;color:#721c24;border:1px solid #f5c6cb;}";
+  html += ".info{background-color:#d1ecf1;color:#0c5460;border:1px solid #bee5eb;}";
+  html += "</style>";
+  html += "</head><body>";
+  html += "<div class=\"container\">";
+  html += "<h1>Firmware Update</h1>";
+  html += "<div class=\"upload-form\">";
+  html += "<input type=\"file\" id=\"firmware\" accept=\".bin\" onchange=\"validateFile(this)\">";
+  html += "<button onclick=\"uploadFirmware()\" id=\"uploadBtn\" disabled>Upload Firmware</button>";
+  html += "</div>";
+  html += "<div class=\"progress\">";
+  html += "<div class=\"progress-bar\" id=\"progressBar\"></div>";
+  html += "</div>";
+  html += "<div id=\"status\"></div>";
+  html += "<div style=\"text-align:center;margin-top:20px;\">";
+  html += "<a href=\"/\" style=\"color:#4CAF50;text-decoration:none;\">← Back to Main</a>";
+  html += "</div>";
+  html += "</div>";
+  html += "<script>";
+  html += "function validateFile(input) {";
+  html += "    const file = input.files[0];";
+  html += "    const uploadBtn = document.getElementById('uploadBtn');";
+  html += "    if (file && file.name.endsWith('.bin')) {";
+  html += "        uploadBtn.disabled = false;";
+  html += "        document.getElementById('status').innerHTML = '<div class=\"status info\">File selected: ' + file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)</div>';";
+  html += "    } else {";
+  html += "        uploadBtn.disabled = true;";
+  html += "        document.getElementById('status').innerHTML = '<div class=\"status error\">Please select a valid .bin file</div>';";
+  html += "    }";
+  html += "}";
+  html += "function uploadFirmware() {";
+  html += "    const fileInput = document.getElementById('firmware');";
+  html += "    const file = fileInput.files[0];";
+  html += "    if (!file) return;";
   html += "    ";
-  html += "    <script>";
-  html += "        document.getElementById('updateForm').onsubmit = function(e) {";
-  html += "            e.preventDefault();";
-  html += "            ";
-  html += "            const file = document.getElementById('firmware').files[0];";
-  html += "            if (!file) {";
-  html += "                alert('Please select a file');";
-  html += "                return;";
-  html += "            }";
-  html += "            ";
-  html += "            const formData = new FormData();";
-  html += "            formData.append('firmware', file);";
-  html += "            ";
-  html += "            const xhr = new XMLHttpRequest();";
-  html += "            ";
-  html += "            xhr.upload.onprogress = function(e) {";
-  html += "                if (e.lengthComputable) {";
-  html += "                    const percentComplete = (e.loaded / e.total) * 100;";
-  html += "                    document.getElementById('progressBar').style.width = percentComplete + '%';";
-  html += "                    document.getElementById('progressBar').textContent = percentComplete + '%';";
-  html += "                }";
-  html += "            };";
-  html += "            ";
-  html += "            xhr.onload = function() {";
-  html += "                if (xhr.status === 200) {";
-  html += "                    document.getElementById('status').innerHTML = '<div style=\"color: green;\">Update successful! Device will restart.</div>';";
-  html += "                } else {";
-  html += "                    document.getElementById('status').innerHTML = '<div style=\"color: red;\">Update failed: ' + xhr.responseText + '</div>';";
-  html += "                }";
-  html += "            };";
-  html += "            ";
-  html += "            xhr.onerror = function() {";
-  html += "                document.getElementById('status').innerHTML = '<div style=\"color: red;\">Update failed: Network error</div>';";
-  html += "            };";
-  html += "            ";
-  html += "            xhr.open('POST', '/doUpdate');";
-  html += "            xhr.send(formData);";
-  html += "        };";
-  html += "    </script>";
-  html += "</body>";
-  html += "</html>";
+  html += "    const uploadBtn = document.getElementById('uploadBtn');";
+  html += "    const statusDiv = document.getElementById('status');";
+  html += "    const progressBar = document.getElementById('progressBar');";
+  html += "    ";
+  html += "    uploadBtn.disabled = true;";
+  html += "    statusDiv.innerHTML = '<div class=\"status info\">Starting upload...</div>';";
+      html += "    progressBar.style.width = '0%';";
+    html += "    ";
+    html += "    const formData = new FormData();";
+  html += "    formData.append('firmware', file);";
+  html += "    ";
+  html += "    const xhr = new XMLHttpRequest();";
+  html += "    ";
+  html += "    xhr.upload.addEventListener('progress', function(e) {";
+  html += "        if (e.lengthComputable) {";
+  html += "            const percentComplete = (e.loaded / e.total) * 100;";
+  html += "            progressBar.style.width = percentComplete + '%';";
+  html += "            statusDiv.innerHTML = '<div class=\"status info\">Uploading: ' + Math.round(percentComplete) + '%</div>';";
+  html += "        }";
+  html += "    });";
+  html += "    ";
+  html += "    xhr.addEventListener('load', function() {";
+  html += "        if (xhr.status === 200) {";
+  html += "            statusDiv.innerHTML = '<div class=\"status success\">Upload completed! Device will restart in 5 seconds...</div>';";
+  html += "            progressBar.style.width = '100%';";
+  html += "            setTimeout(() => {";
+  html += "                window.location.href = '/';";
+  html += "            }, 5000);";
+  html += "        } else {";
+  html += "            statusDiv.innerHTML = '<div class=\"status error\">Upload failed: ' + xhr.responseText + '</div>';";
+  html += "            uploadBtn.disabled = false;";
+  html += "        }";
+  html += "    });";
+  html += "    ";
+  html += "    xhr.addEventListener('error', function() {";
+  html += "        statusDiv.innerHTML = '<div class=\"status error\">Upload failed: Network error</div>';";
+  html += "        uploadBtn.disabled = false;";
+  html += "    });";
+  html += "    ";
+  html += "    xhr.open('POST', '/do_update');";
+  html += "    xhr.send(formData);";
+  html += "}";
+  html += "</script>";
+  html += "</body></html>";
   
   web_server.send(200, "text/html", html);
-}
-
-bool validateFirmwareFile(const String& filename, size_t fileSize) {
-  Serial.println("=== Validating Firmware File ===");
-  Serial.println("Filename: " + filename);
-  Serial.println("File size: " + String(fileSize) + " bytes");
-  
-  // Check file extension
-  if (!filename.endsWith(".bin")) {
-    Serial.println("❌ Error: File must have .bin extension");
-    return false;
-  }
-  
-  // Check minimum file size (ESP32 firmware should be at least 100KB)
-  if (fileSize < 100 * 1024) {
-    Serial.println("❌ Error: File too small for ESP32 firmware (minimum 100KB)");
-    return false;
-  }
-  
-  // Check maximum file size
-  size_t maxSize = ESP.getFreeSketchSpace() - 0x1000;
-  if (fileSize > maxSize) {
-    Serial.println("❌ Error: File too large for available flash space");
-    Serial.println("  File size: " + String(fileSize) + " bytes");
-    Serial.println("  Available: " + String(maxSize) + " bytes");
-    return false;
-  }
-  
-  Serial.println("✅ Firmware file validation passed");
-  Serial.println("===============================");
-  return true;
 }
 
 void handleDoUpdate() {
@@ -1355,134 +1238,67 @@ void handleDoUpdate() {
 }
 
 void handleUpdateBody() {
-  static size_t totalSize = 0;
-  static size_t currentSize = 0;
-  static bool updateStarted = false;
-  
-  // Get the firmware file from the request
   HTTPUpload& upload = web_server.upload();
-  
-  // Feed watchdog at the start of each upload event
-  yield();
-  
-  Serial.printf("OTA Upload Status: %d, Size: %u/%u\n", 
-               upload.status, upload.currentSize, upload.totalSize);
   
   if (upload.status == UPLOAD_FILE_START) {
     Serial.println("=== OTA Update Started ===");
     Serial.println("File name: " + upload.filename);
-    Serial.println("File size: " + String(upload.totalSize));
     
-    // Reset state
-    totalSize = 0;
-    currentSize = 0;
-    updateStarted = false;
+    // Check if we have enough free space
+    size_t freeSpace = ESP.getFreeSketchSpace();
+    Serial.println("Free sketch space: " + String(freeSpace) + " bytes");
     
-    // Print system information for debugging
-    Serial.println("System Info:");
-    Serial.println("  Free Sketch Space: " + String(ESP.getFreeSketchSpace()) + " bytes");
-    Serial.println("  Free Heap: " + String(ESP.getFreeHeap()) + " bytes");
-    Serial.println("  Flash Chip Size: " + String(ESP.getFlashChipSize()) + " bytes");
-    Serial.println("  Max OTA Size: " + String(ESP.getFreeSketchSpace() - 0x1000) + " bytes");
+    if (freeSpace < 100000) {  // Less than 100KB free
+      Serial.println("❌ Error: Insufficient free space for update");
+      return;
+    }
     
-    // Note: We'll start the update when we get the first data chunk
-    // since totalSize might be 0 at this point
+    // Start the update process
+    if (!Update.begin(freeSpace - 0x1000)) {
+      Serial.println("❌ Error: Update.begin() failed");
+      Serial.println("Update error: " + String(Update.getError()));
+      return;
+    }
+    
+    Serial.println("✅ Update started successfully");
+    Serial.println("Expected size: " + String(Update.size()) + " bytes");
     
   } else if (upload.status == UPLOAD_FILE_WRITE) {
-    // Validate that we have data to write
-    if (upload.currentSize == 0) {
-      Serial.println("⚠️ Warning: Received 0 bytes in write chunk");
-      return; // Skip this chunk but don't fail
+    if (upload.buf == nullptr) {
+      Serial.println("❌ Error: Upload buffer is null");
+      return;
     }
     
-    // If this is the first data chunk and we haven't started the update yet
-    if (!updateStarted) {
-      // Estimate total size from this chunk (this is a workaround for the 0 totalSize issue)
-      // We'll use a reasonable estimate based on the first chunk size
-      if (upload.totalSize == 0) {
-        // Estimate: assume file is at least 10x the first chunk size, but cap at max sketch space
-        totalSize = min((size_t)(upload.currentSize * 10), (size_t)(ESP.getFreeSketchSpace() - 0x1000));
-        Serial.println("⚠️ Warning: upload.totalSize is 0, estimating total size as: " + String(totalSize) + " bytes");
-      } else {
-        totalSize = upload.totalSize;
-      }
-      
-      // Validate the firmware file
-      if (!validateFirmwareFile(upload.filename, totalSize)) {
-        Serial.println("❌ Firmware validation failed, aborting update");
-        // Don't send response here as it might interfere with the upload
-        return;
-      }
-      
-      // Begin the update
-      Serial.println("Starting OTA update with estimated size: " + String(totalSize) + " bytes");
-      if (!Update.begin(totalSize)) {
-        String error_msg = "Update begin failed: " + String(Update.errorString());
-        Serial.println("❌ " + error_msg);
-        // Don't send response here as it might interfere with the upload
-        return;
-      }
-      
-      updateStarted = true;
-      Serial.println("✅ Update begin successful");
+    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+      Serial.println("❌ Error: Update.write() failed");
+      Serial.println("Update error: " + String(Update.getError()));
+      return;
     }
     
-    // Write the received data
-    if (Update.write(upload.buf, upload.currentSize)) {
-      currentSize += upload.currentSize;
-      Serial.printf("📤 Progress: %u%% (%u/%u bytes)\n", 
-                   (currentSize * 100) / totalSize, currentSize, totalSize);
-      
-      // Feed the watchdog to prevent reset
-      yield();
-      
-      // Add a small delay to prevent overwhelming the system
-      delay(1);
-      
-    } else {
-      String error_msg = "Update write failed: " + String(Update.errorString());
-      Serial.println("❌ " + error_msg);
-      Serial.println("Current size: " + String(currentSize) + "/" + String(totalSize));
-      Serial.println("Chunk size: " + String(upload.currentSize));
-      Serial.println("Buffer address: " + String((uint32_t)upload.buf));
-      
-      // Don't send response here as it might interfere with the upload
-      // Just log the error and continue
-    }
+    // Calculate progress
+    size_t progress = (Update.progress() * 100) / Update.size();
+    Serial.println("📤 Chunk written: " + String(upload.currentSize) + " bytes");
+    Serial.println("📊 Progress: " + String(progress) + "%");
     
   } else if (upload.status == UPLOAD_FILE_END) {
-    // Finalize the update
-    Serial.println("=== Upload Complete ===");
-    Serial.println("Final size: " + String(currentSize) + "/" + String(totalSize));
-    
-    if (currentSize != totalSize) {
-      Serial.printf("⚠️ Warning: Size mismatch. Expected: %u, Received: %u\n", totalSize, currentSize);
-    }
-    
     if (Update.end()) {
-      Serial.println("✅ Update end successful");
+      Serial.println("✅ Update completed successfully!");
+      Serial.println("Final size: " + String(Update.size()) + " bytes");
       
       // Verify the update
       if (Update.hasError()) {
-        String error_msg = "Update verification failed: " + String(Update.errorString());
-        Serial.println("❌ " + error_msg);
-        web_server.send(500, "text/plain", error_msg);
+        Serial.println("❌ Update verification failed");
+        Serial.println("Error: " + String(Update.getError()));
         return;
       }
       
-      Serial.println("✅ Update verified successfully!");
-      Serial.println("Device will restart in 3 seconds...");
-      web_server.send(200, "text/plain", "Update completed successfully! Device will restart in 3 seconds...");
-      
-      // Restart after a delay to allow response to be sent
+      Serial.println("🔄 Restarting device in 3 seconds...");
       delay(3000);
       ESP.restart();
       
     } else {
-      String error_msg = "Update end failed: " + String(Update.errorString());
-      Serial.println("❌ " + error_msg);
-      web_server.send(500, "text/plain", error_msg);
-      return;
+      Serial.println("❌ Error: Update.end() failed");
+      Serial.println("Update error: " + String(Update.getError()));
     }
   }
 }
