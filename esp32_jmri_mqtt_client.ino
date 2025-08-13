@@ -47,13 +47,13 @@ Preferences preferences;
 // MQTT broker info storage
 String mqtt_broker_ip = "";
 int mqtt_broker_port = 0;
+String mqtt_channel_name = "";
 
 // State variables
 bool wifi_configured = false;
 bool mqtt_connected = false;
 unsigned long last_mqtt_attempt = 0;
-unsigned long last_status_update = 0;
-unsigned long last_periodic_status = 0;  // For periodic status publishing
+// Removed periodic status publishing - only publish on state changes
 
 // Sensor states
 bool sensor_states[4] = {false, false, false, false};
@@ -157,20 +157,12 @@ void loop() {
   // Handle OTA
   ArduinoOTA.handle();
   
-  // Update status
-  if (millis() - last_status_update > STATUS_UPDATE_INTERVAL) {
-    updateStatus();
-    last_status_update = millis();
-  }
+  // Only publish device status when states actually change
+  // Removed periodic status publishing - JMRI only needs state change notifications
   
-  // Periodic status publishing for all devices
-  if (millis() - last_periodic_status > PERIODIC_STATUS_INTERVAL) {
-    publishAllDeviceStatus();
-    last_periodic_status = millis();
-    
-    // Also report connection status
-    Serial.println("=== Connection Status Report ===");
-    Serial.println("WiFi Status: " + String(WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected"));
+  // Connection status (keep minimal logging)
+  static unsigned long last_connection_log = 0;
+  if (millis() - last_connection_log > 60000) { // Log every minute
     if (WiFi.status() == WL_CONNECTED) {
       Serial.println("SSID: " + WiFi.SSID());
       Serial.println("IP: " + WiFi.localIP().toString());
@@ -180,7 +172,7 @@ void loop() {
     if (mqtt_connected) {
       Serial.println("Broker: " + mqtt_broker_ip + ":" + String(mqtt_broker_port));
     }
-    Serial.println("===============================");
+    last_connection_log = millis();
   }
   
   delay(10);
@@ -231,12 +223,14 @@ void loadMQTTCredentials() {
   String broker = preferences.getString("mqtt_broker", "");
   int port = preferences.getInt("mqtt_port", 0);
   String client_id = preferences.getString("mqtt_client_id", "");
+  String channel_name = preferences.getString("mqtt_channel_name", "");
   String topic_prefix = preferences.getString("mqtt_topic_prefix", "");
   
   Serial.println("From preferences:");
   Serial.println("  Broker: " + (broker.length() > 0 ? broker : "NOT SET"));
   Serial.println("  Port: " + (port > 0 ? String(port) : "NOT SET"));
   Serial.println("  Client ID: " + (client_id.length() > 0 ? client_id : "NOT SET"));
+  Serial.println("  Channel Name: " + (channel_name.length() > 0 ? channel_name : "NOT SET"));
   Serial.println("  Topic Prefix: " + (topic_prefix.length() > 0 ? topic_prefix : "NOT SET"));
   
   if (broker.length() > 0 && port > 0 && client_id.length() > 0 && topic_prefix.length() > 0) {
@@ -244,9 +238,14 @@ void loadMQTTCredentials() {
     // Update MQTT client settings
     mqtt_broker_ip = broker;
     mqtt_broker_port = port;
+    mqtt_channel_name = channel_name.length() > 0 ? channel_name : String(MQTT_CHANNEL_NAME);
     
-    // Update topic strings
-    mqtt_base_topic = String(topic_prefix) + "/";
+    // Update topic strings with channel name prefix
+    String channel_prefix = mqtt_channel_name;
+    if (!channel_prefix.startsWith("/")) {
+      channel_prefix = "/" + channel_prefix;
+    }
+    mqtt_base_topic = channel_prefix + "/" + String(topic_prefix) + "/";
     mqtt_sensor_topic = mqtt_base_topic + "sensor/";
     mqtt_turnout_topic = mqtt_base_topic + "turnout/";
     mqtt_signal_topic = mqtt_base_topic + "signal/";
@@ -265,7 +264,11 @@ void loadMQTTCredentials() {
     Serial.println("  Broker: " + String(MQTT_BROKER));
     Serial.println("  Port: " + String(MQTT_PORT));
     Serial.println("  Client ID: " + String(MQTT_CLIENT_ID));
+    Serial.println("  Channel Name: " + String(MQTT_CHANNEL_NAME));
     Serial.println("  Topic Prefix: " + String(MQTT_TOPIC_PREFIX));
+    
+    // Set default channel name
+    mqtt_channel_name = String(MQTT_CHANNEL_NAME);
   }
   
   Serial.println("===============================");
@@ -334,11 +337,15 @@ void setupMQTT() {
     Serial.println("  Broker: " + String(MQTT_BROKER));
     Serial.println("  Port: " + String(MQTT_PORT));
     Serial.println("  Client ID: " + String(MQTT_CLIENT_ID));
+    Serial.println("  Channel Name: " + String(MQTT_CHANNEL_NAME));
     Serial.println("  Topic Prefix: " + String(MQTT_TOPIC_PREFIX));
     
     // Set default values if none were loaded
     mqtt_broker_ip = String(MQTT_BROKER);
     mqtt_broker_port = MQTT_PORT;
+    if (mqtt_channel_name.length() == 0) {
+      mqtt_channel_name = String(MQTT_CHANNEL_NAME);
+    }
   }
   
   // Update MQTT client settings
@@ -347,8 +354,12 @@ void setupMQTT() {
   mqtt_client.setKeepAlive(60);
   mqtt_client.setSocketTimeout(30);
   
-  // Update topic strings with current values
-  mqtt_base_topic = String(MQTT_TOPIC_PREFIX) + "/";
+  // Update topic strings with current values including channel name
+  String channel_prefix = mqtt_channel_name;
+  if (!channel_prefix.startsWith("/")) {
+    channel_prefix = "/" + channel_prefix;
+  }
+  mqtt_base_topic = channel_prefix + "/" + String(MQTT_TOPIC_PREFIX) + "/";
   mqtt_sensor_topic = mqtt_base_topic + "sensor/";
   mqtt_turnout_topic = mqtt_base_topic + "turnout/";
   mqtt_signal_topic = mqtt_base_topic + "signal/";
@@ -458,6 +469,7 @@ void handleWiFiReconnection() {
 void handleMQTT() {
   if (!mqtt_client.connected()) {
     if (millis() - last_mqtt_attempt > MQTT_RETRY_INTERVAL) {
+      Serial.println("🔍 DEBUG: MQTT disconnected, calling mqttReconnect() from handleMQTT()");
       mqttReconnect();
       last_mqtt_attempt = millis();
     }
@@ -491,6 +503,7 @@ void testMQTTBrokerConnectivity() {
 }
 
 void mqttReconnect() {
+  Serial.println("🔍 DEBUG: mqttReconnect() called at " + String(millis()) + " ms");
   Serial.println("=== Attempting MQTT Connection ===");
   Serial.println("Broker: " + mqtt_broker_ip);
   Serial.println("Port: " + String(mqtt_broker_port));
@@ -502,9 +515,10 @@ void mqttReconnect() {
     Serial.println("✅ MQTT connected successfully!");
     mqtt_connected = true;
     
-    // Subscribe to control topics
+    // Subscribe to control topics (not status topics to avoid feedback loops)
     String turnout_topic = mqtt_turnout_topic + "+";
     String signal_topic = mqtt_signal_topic + "+";
+    String sensor_topic = mqtt_sensor_topic + "+";
     
     Serial.println("Subscribing to turnout topic: " + turnout_topic);
     mqtt_client.subscribe(turnout_topic.c_str());
@@ -512,11 +526,20 @@ void mqttReconnect() {
     Serial.println("Subscribing to signal topic: " + signal_topic);
     mqtt_client.subscribe(signal_topic.c_str());
     
+    Serial.println("Subscribing to sensor topic: " + sensor_topic);
+    mqtt_client.subscribe(sensor_topic.c_str());
+    
     Serial.println("Subscriptions completed");
     
-    // Publish initial status
-    Serial.println("Publishing initial status...");
-    publishInitialStatus();
+    // Only publish initial status on first connection, not reconnections
+    static bool initial_status_published = false;
+    if (!initial_status_published) {
+      Serial.println("Publishing initial status...");
+      publishInitialStatus();
+      initial_status_published = true;
+    } else {
+      Serial.println("Skipping initial status publish (already done)");
+    }
     
     Serial.println("=== MQTT Setup Complete ===");
   } else {
@@ -536,6 +559,35 @@ void mqttReconnect() {
   }
 }
 
+// Track our own recent publications to prevent feedback loops
+struct RecentPublication {
+  String topic;
+  String payload;
+  unsigned long timestamp;
+};
+
+RecentPublication recent_pubs[10];  // Track last 10 publications
+int recent_pub_index = 0;
+
+void trackPublication(String topic, String payload) {
+  recent_pubs[recent_pub_index].topic = topic;
+  recent_pubs[recent_pub_index].payload = payload;
+  recent_pubs[recent_pub_index].timestamp = millis();
+  recent_pub_index = (recent_pub_index + 1) % 10;
+}
+
+bool isOurOwnMessage(String topic, String payload) {
+  unsigned long now = millis();
+  for (int i = 0; i < 10; i++) {
+    if (recent_pubs[i].topic == topic && 
+        recent_pubs[i].payload == payload && 
+        (now - recent_pubs[i].timestamp) < 2000) {  // Within 2 seconds
+      return true;
+    }
+  }
+  return false;
+}
+
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String topic_str = String(topic);
   String payload_str = "";
@@ -550,6 +602,21 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.println("  Length: " + String(length) + " bytes");
   Serial.println("  From Broker: " + mqtt_broker_ip + ":" + String(mqtt_broker_port));
   Serial.println("  Timestamp: " + String(millis()) + " ms");
+  
+  // Check if this is our own message to prevent feedback loops
+  if (isOurOwnMessage(topic_str, payload_str)) {
+    Serial.println("  🔄 Ignoring our own message to prevent feedback loop");
+    Serial.println("================================");
+    return;
+  }
+  
+  // Ignore $SYS topics
+  if (topic_str.startsWith("$SYS")) {
+    Serial.println("  ℹ️ Ignoring $SYS topic");
+    Serial.println("================================");
+    return;
+  }
+  
   Serial.println("================================");
   
   // Handle turnout control - JMRI sends simple text commands
@@ -562,6 +629,12 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   if (topic_str.indexOf("/signal/") > 0) {
     Serial.println("🎯 Processing signal control message");
     handleSignalControl(topic_str, payload_str);
+  }
+  
+  // Handle sensor queries - respond with current status
+  if (topic_str.indexOf("/sensor/") > 0) {
+    Serial.println("🎯 Processing sensor query message");
+    handleSensorQuery(topic_str, payload_str);
   }
 }
 
@@ -639,14 +712,13 @@ void handleTurnoutControl(String topic, String payload) {
     return;
   }
   
-  // Always publish status update after processing command
-  Serial.println("📤 Publishing status update...");
-  publishTurnoutStatus(turnout_num + 1);
-  
+  // Don't publish when state changes due to MQTT commands
+  // JMRI already knows it sent the command, no need to echo back
   if (state_changed) {
-    Serial.println("🔄 State changed, publishing to JMRI");
+    Serial.println("🔄 State changed due to MQTT command, but not publishing back to JMRI");
+    Serial.println("ℹ️ JMRI already knows it sent this command - no echo needed");
   } else {
-    Serial.println("ℹ️ No state change, but still publishing status to JMRI");
+    Serial.println("ℹ️ No state change, already in requested state");
   }
   
   Serial.println("=====================");
@@ -657,11 +729,14 @@ void handleSignalControl(String topic, String payload) {
   Serial.println("Topic: " + topic);
   Serial.println("Payload: " + payload);
   
+  bool state_changed = false;
+  
   if (payload == "RED") {
     Serial.println("Requested aspect: RED");
-    Serial.println("Current aspect: " + String(signal_state == 0 ? "red" : signal_state == 1 ? "yellow" : "green"));
+    Serial.println("Current aspect: " + String(signal_state == 0 ? "RED" : signal_state == 1 ? "YELLOW" : "GREEN"));
     
     if (signal_state != 0) {
+      state_changed = true;
       signal_state = 0;
       digitalWrite(SIGNAL_PIN_RED, HIGH);
       digitalWrite(SIGNAL_PIN_YELLOW, LOW);
@@ -669,18 +744,17 @@ void handleSignalControl(String topic, String payload) {
       Serial.println("Signal pin " + String(SIGNAL_PIN_RED) + " set to HIGH (RED)");
       Serial.println("Signal pin " + String(SIGNAL_PIN_YELLOW) + " set to LOW");
       Serial.println("Signal pin " + String(SIGNAL_PIN_GREEN) + " set to LOW");
+      Serial.println("✅ Signal changed to RED");
+    } else {
+      Serial.println("ℹ️ Signal already in RED state");
     }
     
-    Serial.println("Signal changed from " + String(signal_state == 0 ? "red" : signal_state == 1 ? "yellow" : "green") + 
-                  " to RED");
-    
-    // Publish status update
-    publishSignalStatus();
   } else if (payload == "YELLOW") {
     Serial.println("Requested aspect: YELLOW");
-    Serial.println("Current aspect: " + String(signal_state == 0 ? "red" : signal_state == 1 ? "yellow" : "green"));
+    Serial.println("Current aspect: " + String(signal_state == 0 ? "RED" : signal_state == 1 ? "YELLOW" : "GREEN"));
     
     if (signal_state != 1) {
+      state_changed = true;
       signal_state = 1;
       digitalWrite(SIGNAL_PIN_RED, LOW);
       digitalWrite(SIGNAL_PIN_YELLOW, HIGH);
@@ -688,18 +762,17 @@ void handleSignalControl(String topic, String payload) {
       Serial.println("Signal pin " + String(SIGNAL_PIN_RED) + " set to LOW");
       Serial.println("Signal pin " + String(SIGNAL_PIN_YELLOW) + " set to HIGH (YELLOW)");
       Serial.println("Signal pin " + String(SIGNAL_PIN_GREEN) + " set to LOW");
+      Serial.println("✅ Signal changed to YELLOW");
+    } else {
+      Serial.println("ℹ️ Signal already in YELLOW state");
     }
     
-    Serial.println("Signal changed from " + String(signal_state == 0 ? "red" : signal_state == 1 ? "yellow" : "green") + 
-                  " to YELLOW");
-    
-    // Publish status update
-    publishSignalStatus();
   } else if (payload == "GREEN") {
     Serial.println("Requested aspect: GREEN");
-    Serial.println("Current aspect: " + String(signal_state == 0 ? "red" : signal_state == 1 ? "yellow" : "green"));
+    Serial.println("Current aspect: " + String(signal_state == 0 ? "RED" : signal_state == 1 ? "YELLOW" : "GREEN"));
     
     if (signal_state != 2) {
+      state_changed = true;
       signal_state = 2;
       digitalWrite(SIGNAL_PIN_RED, LOW);
       digitalWrite(SIGNAL_PIN_YELLOW, LOW);
@@ -707,17 +780,68 @@ void handleSignalControl(String topic, String payload) {
       Serial.println("Signal pin " + String(SIGNAL_PIN_RED) + " set to LOW");
       Serial.println("Signal pin " + String(SIGNAL_PIN_YELLOW) + " set to LOW");
       Serial.println("Signal pin " + String(SIGNAL_PIN_GREEN) + " set to HIGH (GREEN)");
+      Serial.println("✅ Signal changed to GREEN");
+    } else {
+      Serial.println("ℹ️ Signal already in GREEN state");
     }
     
-    Serial.println("Signal changed from " + String(signal_state == 0 ? "red" : signal_state == 1 ? "yellow" : "green") + 
-                  " to GREEN");
-    
-    // Publish status update
-    publishSignalStatus();
   } else {
     Serial.println("❌ Unknown aspect specified in signal control message: " + payload);
+    Serial.println("===================");
+    return;
   }
+  
+  // Don't publish when state changes due to MQTT commands
+  // JMRI already knows it sent the command, no need to echo back
+  if (state_changed) {
+    Serial.println("🔄 State changed due to MQTT command, but not publishing back to JMRI");
+    Serial.println("ℹ️ JMRI already knows it sent this command - no echo needed");
+  } else {
+    Serial.println("ℹ️ No state change, already in requested state");
+  }
+  
   Serial.println("===================");
+}
+
+void handleSensorQuery(String topic, String payload) {
+  // Extract sensor number from topic (e.g., "trains/track/sensor/1" -> sensor 1)
+  int sensor_num = 0;
+  
+  // Find the last number in the topic
+  int lastSlash = topic.lastIndexOf('/');
+  if (lastSlash > 0) {
+    String sensor_str = topic.substring(lastSlash + 1);
+    sensor_num = sensor_str.toInt();
+  }
+  
+  // Validate sensor number
+  if (sensor_num < 1 || sensor_num > 4) {
+    Serial.println("❌ Error: Invalid sensor number: " + String(sensor_num));
+    Serial.println("=====================");
+    return;
+  }
+  
+  String actual_state = sensor_states[sensor_num - 1] ? "ACTIVE" : "INACTIVE";
+  
+  Serial.println("=== Sensor Query ===");
+  Serial.println("Sensor: " + String(sensor_num));
+  Serial.println("Topic: " + topic);
+  Serial.println("Requested state: " + payload);
+  Serial.println("Actual physical state: " + actual_state);
+  
+  // Sensors are read-only - always respond with actual physical state
+  // This allows JMRI to detect when sensor state differs from expectations
+  if (payload != actual_state) {
+    Serial.println("⚠️ JMRI requested '" + payload + "' but sensor is actually '" + actual_state + "'");
+    Serial.println("📤 Correcting JMRI with actual sensor state...");
+  } else {
+    Serial.println("✅ JMRI state matches actual sensor state");
+    Serial.println("📤 Confirming sensor state...");
+  }
+  
+  publishSensorStatus(sensor_num);
+  
+  Serial.println("====================");
 }
 
 void handleSensors() {
@@ -746,9 +870,12 @@ void handleSensors() {
 void publishSensorStatus(int sensor_num) {
   if (!mqtt_connected) return;
   
-  // JMRI expects simple text messages, not JSON
+  // Publish to same topic as commands - filtering prevents feedback loops
   String state = sensor_states[sensor_num - 1] ? "ACTIVE" : "INACTIVE";
-  String topic = mqtt_sensor_topic + String(sensor_num) + "/status";
+  String topic = mqtt_sensor_topic + String(sensor_num);
+  
+  // Track this publication to prevent feedback loops
+  trackPublication(topic, state);
   
   mqtt_client.publish(topic.c_str(), state.c_str());
   
@@ -758,9 +885,17 @@ void publishSensorStatus(int sensor_num) {
 void publishTurnoutStatus(int turnout_num) {
   if (!mqtt_connected) return;
   
-  // JMRI expects simple text messages, not JSON
+  // Publish to same topic as commands - filtering prevents feedback loops
   String position = turnout_states[turnout_num - 1] ? "THROWN" : "CLOSED";
-  String topic = mqtt_turnout_topic + String(turnout_num) + "/status";
+  String topic = mqtt_turnout_topic + String(turnout_num);
+  
+  // Debug: show the source of this publication
+  Serial.println("🔍 DEBUG: Publishing turnout " + String(turnout_num) + " status");
+  Serial.println("   Internal state: " + String(turnout_states[turnout_num - 1] ? "true (THROWN)" : "false (CLOSED)"));
+  Serial.println("   Pin state: " + String(digitalRead(turnout_num == 1 ? TURNOUT_PIN_1 : TURNOUT_PIN_2) ? "HIGH (THROWN)" : "LOW (CLOSED)"));
+  
+  // Track this publication to prevent feedback loops
+  trackPublication(topic, position);
   
   mqtt_client.publish(topic.c_str(), position.c_str());
   
@@ -770,9 +905,12 @@ void publishTurnoutStatus(int turnout_num) {
 void publishSignalStatus() {
   if (!mqtt_connected) return;
   
-  // JMRI expects simple text messages, not JSON
+  // Publish to same topic as commands - filtering prevents feedback loops
   String aspect = (signal_state == 0) ? "RED" : (signal_state == 1) ? "YELLOW" : "GREEN";
-  String topic = mqtt_signal_topic + "1/status";
+  String topic = mqtt_signal_topic + "1";
+  
+  // Track this publication to prevent feedback loops
+  trackPublication(topic, aspect);
   
   mqtt_client.publish(topic.c_str(), aspect.c_str());
   
@@ -783,6 +921,7 @@ void publishInitialStatus() {
   if (!mqtt_connected) return;
   
   Serial.println("=== Publishing Initial Status for All Devices to JMRI ===");
+  Serial.println("🔍 DEBUG: publishInitialStatus() called");
   
   // Publish individual sensor statuses
   for (int i = 1; i <= 4; i++) {
@@ -792,6 +931,7 @@ void publishInitialStatus() {
   
   // Publish individual turnout statuses
   for (int i = 1; i <= 2; i++) {
+    Serial.println("🔍 DEBUG: publishTurnoutStatus() called from publishInitialStatus()");
     publishTurnoutStatus(i);
     delay(100);  // Small delay between publishes
   }
@@ -799,75 +939,13 @@ void publishInitialStatus() {
   // Publish signal status
   publishSignalStatus();
   
-  // Publish overall device status
-  publishStatus();
-  
-  Serial.println("=== Initial Status Published for All Devices to JMRI ===");
+  Serial.println("=== Initial Device States Published to JMRI ===");
 }
 
-void publishAllDeviceStatus() {
-  if (!mqtt_connected) return;
-  
-  Serial.println("=== Publishing All Device Status ===");
-  
-  // Publish individual sensor statuses
-  for (int i = 1; i <= 4; i++) {
-    publishSensorStatus(i);
-    delay(100);  // Small delay between publishes
-  }
-  
-  // Publish individual turnout statuses
-  for (int i = 1; i <= 2; i++) {
-    publishTurnoutStatus(i);
-    delay(100);  // Small delay between publishes
-  }
-  
-  // Publish signal status
-  publishSignalStatus();
-  
-  // Publish overall device status
-  publishStatus();
-  
-  Serial.println("=== All Device Status Published ===");
-}
+// Removed publishAllDeviceStatus() - only publish when states actually change
 
-void publishStatus() {
-  if (!mqtt_connected) return;
-  
-  Serial.println("=== Publishing Device Status ===");
-  
-  // JMRI expects simple text status, not JSON
-  String status_msg = "Device: " + String(DEVICE_NAME) + 
-                     ", Version: " + String(FIRMWARE_VERSION) + 
-                     ", IP: " + WiFi.localIP().toString() + 
-                     ", RSSI: " + String(WiFi.RSSI()) + " dBm" +
-                     ", Uptime: " + String(millis()) + " ms";
-  
-  Serial.println("Device: " + String(DEVICE_NAME));
-  Serial.println("Version: " + String(FIRMWARE_VERSION));
-  Serial.println("IP: " + WiFi.localIP().toString());
-  Serial.println("RSSI: " + String(WiFi.RSSI()) + " dBm");
-  Serial.println("Uptime: " + String(millis()) + " ms");
-  Serial.println("Sensors: " + String(sensor_states[0] ? "O" : "C") + " " + 
-                String(sensor_states[1] ? "O" : "C") + " " + 
-                String(sensor_states[2] ? "O" : "C") + " " + 
-                String(sensor_states[3] ? "O" : "C") + " (O=Occupied, C=Clear)");
-  Serial.println("Turnouts: " + String(turnout_states[0] ? "T" : "N") + " " + 
-                String(turnout_states[1] ? "T" : "N") + " (T=Thrown, N=Normal)");
-  Serial.println("Signal: " + String(signal_state == 0 ? "RED" : signal_state == 1 ? "YELLOW" : "GREEN"));
-  
-  mqtt_client.publish(mqtt_status_topic.c_str(), status_msg.c_str());
-  
-  Serial.println("Status published to topic: " + mqtt_status_topic);
-  Serial.println("Message: " + status_msg);
-  Serial.println("===============================");
-}
-
-void updateStatus() {
-  if (mqtt_connected) {
-    publishStatus();
-  }
-}
+// Removed publishStatus() and updateStatus() functions
+// MQTT status is now only published when device states actually change
 
 // Web server handlers
 void handleRoot() {
@@ -889,6 +967,7 @@ void handleRoot() {
   html += ".success{background-color:#d4edda;color:#155724;border:1px solid #c3e6cb;}";
   html += ".error{background-color:#f8d7da;color:#721c24;border:1px solid #f5c6cb;}";
   html += ".info{background-color:#d1ecf1;color:#0c5460;border:1px solid #bee5eb;}";
+  html += ".status-json{font-family:monospace;font-size:12px;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:break-word;max-width:100%;background:#f8f9fa;padding:15px;border-radius:4px;border:1px solid #dee2e6;max-height:400px;overflow-y:auto;}";
   html += "</style>";
   html += "</head><body>";
   html += "<div class=\"container\">";
@@ -928,6 +1007,10 @@ void handleRoot() {
   html += "<input type=\"text\" id=\"mqtt_client_id\" name=\"mqtt_client_id\" value=\"" + String(MQTT_CLIENT_ID) + "\" required>";
   html += "</div>";
   html += "<div class=\"form-group\">";
+  html += "<label for=\"mqtt_channel_name\">Channel Name:</label>";
+  html += "<input type=\"text\" id=\"mqtt_channel_name\" name=\"mqtt_channel_name\" value=\"" + mqtt_channel_name + "\" required>";
+  html += "</div>";
+  html += "<div class=\"form-group\">";
   html += "<label for=\"mqtt_topic_prefix\">Topic Prefix:</label>";
   html += "<input type=\"text\" id=\"mqtt_topic_prefix\" name=\"mqtt_topic_prefix\" value=\"" + String(MQTT_TOPIC_PREFIX) + "\" required>";
   html += "</div>";
@@ -963,6 +1046,7 @@ void handleRoot() {
   html += "    formData.append('mqtt_broker', document.getElementById('mqtt_broker').value);";
   html += "    formData.append('mqtt_port', document.getElementById('mqtt_port').value);";
   html += "    formData.append('mqtt_client_id', document.getElementById('mqtt_client_id').value);";
+  html += "    formData.append('mqtt_channel_name', document.getElementById('mqtt_channel_name').value);";
   html += "    formData.append('mqtt_topic_prefix', document.getElementById('mqtt_topic_prefix').value);";
   html += "    fetch('/configure_mqtt', { method: 'POST', body: formData })";
   html += "    .then(response => response.text())";
@@ -975,9 +1059,10 @@ void handleRoot() {
   html += "};";
   html += "function checkStatus() {";
   html += "    fetch('/status')";
-  html += "    .then(response => response.text())";
+  html += "    .then(response => response.json())";
   html += "    .then(data => {";
-  html += "        document.getElementById('status').innerHTML = '<div class=\"status success\">' + data + '</div>';";
+  html += "        const prettyJson = JSON.stringify(data, null, 2);";
+  html += "        document.getElementById('status').innerHTML = '<div class=\"status success\"><h3>Device Status</h3><pre class=\"status-json\">' + prettyJson + '</pre></div>';";
   html += "    })";
   html += "    .catch(error => {";
   html += "        document.getElementById('status').innerHTML = '<div class=\"status error\">Error: ' + error + '</div>';";
@@ -1014,22 +1099,25 @@ void handleWiFiConfig() {
 }
 
 void handleMQTTConfig() {
-  if (web_server.hasArg("mqtt_broker") && web_server.hasArg("mqtt_port") && web_server.hasArg("mqtt_client_id") && web_server.hasArg("mqtt_topic_prefix")) {
+  if (web_server.hasArg("mqtt_broker") && web_server.hasArg("mqtt_port") && web_server.hasArg("mqtt_client_id") && web_server.hasArg("mqtt_channel_name") && web_server.hasArg("mqtt_topic_prefix")) {
     String new_broker = web_server.arg("mqtt_broker");
     int new_port = web_server.arg("mqtt_port").toInt();
     String new_client_id = web_server.arg("mqtt_client_id");
+    String new_channel_name = web_server.arg("mqtt_channel_name");
     String new_topic_prefix = web_server.arg("mqtt_topic_prefix");
 
     Serial.println("=== MQTT Configuration Update ===");
     Serial.println("New Broker: " + new_broker);
     Serial.println("New Port: " + String(new_port));
     Serial.println("New Client ID: " + new_client_id);
+    Serial.println("New Channel Name: " + new_channel_name);
     Serial.println("New Topic Prefix: " + new_topic_prefix);
 
     // Save to preferences
     preferences.putString("mqtt_broker", new_broker);
     preferences.putInt("mqtt_port", new_port);
     preferences.putString("mqtt_client_id", new_client_id);
+    preferences.putString("mqtt_channel_name", new_channel_name);
     preferences.putString("mqtt_topic_prefix", new_topic_prefix);
 
     // Update MQTT client settings
@@ -1038,9 +1126,14 @@ void handleMQTTConfig() {
     // Update our stored broker info
     mqtt_broker_ip = new_broker;
     mqtt_broker_port = new_port;
+    mqtt_channel_name = new_channel_name;
     
-    // Update topic strings
-    mqtt_base_topic = String(new_topic_prefix) + "/";
+    // Update topic strings with channel name prefix
+    String channel_prefix = mqtt_channel_name;
+    if (!channel_prefix.startsWith("/")) {
+      channel_prefix = "/" + channel_prefix;
+    }
+    mqtt_base_topic = channel_prefix + "/" + String(new_topic_prefix) + "/";
     mqtt_sensor_topic = mqtt_base_topic + "sensor/";
     mqtt_turnout_topic = mqtt_base_topic + "turnout/";
     mqtt_signal_topic = mqtt_base_topic + "signal/";
@@ -1069,6 +1162,7 @@ void handleMQTTConfig() {
       // Resubscribe to control topics
       String turnout_topic = mqtt_turnout_topic + "+";
       String signal_topic = mqtt_signal_topic + "+";
+      String sensor_topic = mqtt_sensor_topic + "+";
       
       Serial.println("Resubscribing to turnout topic: " + turnout_topic);
       mqtt_client.subscribe(turnout_topic.c_str());
@@ -1076,9 +1170,11 @@ void handleMQTTConfig() {
       Serial.println("Resubscribing to signal topic: " + signal_topic);
       mqtt_client.subscribe(signal_topic.c_str());
       
-      // Publish updated status
-      Serial.println("Publishing updated status...");
-      publishInitialStatus();
+      Serial.println("Resubscribing to sensor topic: " + sensor_topic);
+      mqtt_client.subscribe(sensor_topic.c_str());
+      
+      // Skip republishing status on config changes - JMRI already knows current states
+      Serial.println("Skipping status republish (no state changes)");
       
       Serial.println("=== MQTT Reconfiguration Complete ===");
     } else {
@@ -1089,7 +1185,7 @@ void handleMQTTConfig() {
 
     web_server.send(200, "text/plain", "MQTT configuration saved. Device will reconnect to MQTT broker.");
   } else {
-    web_server.send(400, "text/plain", "Missing MQTT configuration parameters");
+    web_server.send(400, "text/plain", "Missing MQTT configuration parameters (broker, port, client_id, channel_name, or topic_prefix)");
   }
 }
 
@@ -1106,12 +1202,32 @@ void handleStatus() {
   doc["mqtt_broker"] = preferences.getString("mqtt_broker", MQTT_BROKER);
   doc["mqtt_port"] = preferences.getInt("mqtt_port", MQTT_PORT);
   doc["mqtt_client_id"] = preferences.getString("mqtt_client_id", MQTT_CLIENT_ID);
+  doc["mqtt_channel_name"] = preferences.getString("mqtt_channel_name", MQTT_CHANNEL_NAME);
   doc["mqtt_topic_prefix"] = preferences.getString("mqtt_topic_prefix", MQTT_TOPIC_PREFIX);
   
   doc["uptime"] = millis();
   
+  // Add current device states
+  JsonArray sensor_states_array = doc.createNestedArray("sensor_states");
+  for (int i = 0; i < 4; i++) {
+    JsonObject sensor = sensor_states_array.createNestedObject();
+    sensor["number"] = i + 1;
+    sensor["state"] = sensor_states[i] ? "ACTIVE" : "INACTIVE";
+  }
+  
+  JsonArray turnout_states_array = doc.createNestedArray("turnout_states");
+  for (int i = 0; i < 2; i++) {
+    JsonObject turnout = turnout_states_array.createNestedObject();
+    turnout["number"] = i + 1;
+    turnout["position"] = turnout_states[i] ? "THROWN" : "CLOSED";
+  }
+  
+  JsonObject signal = doc.createNestedObject("signal_state");
+  signal["number"] = 1;
+  signal["aspect"] = (signal_state == 0) ? "RED" : (signal_state == 1) ? "YELLOW" : "GREEN";
+  
   String json_string;
-  serializeJson(doc, json_string);
+  serializeJsonPretty(doc, json_string);  // Use pretty formatting
   
   web_server.send(200, "application/json", json_string);
 }
