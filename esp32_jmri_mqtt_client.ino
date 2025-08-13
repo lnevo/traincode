@@ -43,11 +43,16 @@ PubSubClient mqtt_client(espClient);
 WebServer web_server(80);
 Preferences preferences;
 
+// MQTT broker info storage
+String mqtt_broker_ip = "";
+int mqtt_broker_port = 0;
+
 // State variables
 bool wifi_configured = false;
 bool mqtt_connected = false;
 unsigned long last_mqtt_attempt = 0;
 unsigned long last_status_update = 0;
+unsigned long last_periodic_status = 0;  // For periodic status publishing
 
 // Sensor states
 bool sensor_states[4] = {false, false, false, false};
@@ -59,10 +64,26 @@ bool turnout_states[2] = {false, false};
 // Signal states
 int signal_state = 0; // 0=red, 1=yellow, 2=green
 
+void displaySystemInfo() {
+  Serial.println("=== System Information ===");
+  Serial.println("Device: " + String(DEVICE_NAME));
+  Serial.println("Firmware Version: " + String(FIRMWARE_VERSION));
+  Serial.println("Free Sketch Space: " + String(ESP.getFreeSketchSpace()) + " bytes");
+  Serial.println("Free Heap: " + String(ESP.getFreeHeap()) + " bytes");
+  Serial.println("Flash Chip Size: " + String(ESP.getFlashChipSize()) + " bytes");
+  Serial.println("Max OTA Size: " + String(ESP.getFreeSketchSpace() - 0x1000) + " bytes");
+  Serial.println("SDK Version: " + String(ESP.getSdkVersion()));
+  Serial.println("CPU Frequency: " + String(ESP.getCpuFreqMHz()) + " MHz");
+  Serial.println("===============================");
+}
+
 void setup() {
   Serial.begin(SERIAL_BAUD_RATE);
   Serial.println("\n\n=== ESP32 JMRI MQTT Client ===");
   Serial.println("Firmware Version: " + String(FIRMWARE_VERSION));
+  
+  // Display system information
+  displaySystemInfo();
   
   // Initialize pins
   initializePins();
@@ -84,8 +105,19 @@ void setup() {
   // Setup WiFi
   setupWiFi();
   
+  // Wait for WiFi to stabilize
+  if (WiFi.status() == WL_CONNECTED) {
+    delay(2000);  // Give WiFi time to stabilize
+    Serial.println("WiFi connected, attempting MQTT connection...");
+  }
+  
   // Setup MQTT
   setupMQTT();
+  
+  // Attempt initial MQTT connection if WiFi is available
+  if (WiFi.status() == WL_CONNECTED) {
+    mqttReconnect();
+  }
   
   // Setup web server for configuration
   setupWebServer();
@@ -123,6 +155,26 @@ void loop() {
   if (millis() - last_status_update > STATUS_UPDATE_INTERVAL) {
     updateStatus();
     last_status_update = millis();
+  }
+  
+  // Periodic status publishing for all devices
+  if (millis() - last_periodic_status > PERIODIC_STATUS_INTERVAL) {
+    publishAllDeviceStatus();
+    last_periodic_status = millis();
+    
+    // Also report connection status
+    Serial.println("=== Connection Status Report ===");
+    Serial.println("WiFi Status: " + String(WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected"));
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("SSID: " + WiFi.SSID());
+      Serial.println("IP: " + WiFi.localIP().toString());
+      Serial.println("RSSI: " + String(WiFi.RSSI()) + " dBm");
+    }
+    Serial.println("MQTT Status: " + String(mqtt_connected ? "Connected" : "Disconnected"));
+    if (mqtt_connected) {
+      Serial.println("Broker: " + mqtt_broker_ip + ":" + String(mqtt_broker_port));
+    }
+    Serial.println("===============================");
   }
   
   delay(10);
@@ -178,6 +230,10 @@ void loadMQTTCredentials() {
     // Update MQTT client settings
     mqtt_client.setServer(broker.c_str(), port);
     
+    // Update our stored broker info
+    mqtt_broker_ip = broker;
+    mqtt_broker_port = port;
+    
     // Update topic strings
     mqtt_base_topic = String(topic_prefix) + "/" + WiFi.macAddress();
     mqtt_sensor_topic = mqtt_base_topic + "/sensors";
@@ -192,7 +248,11 @@ void loadMQTTCredentials() {
 void setupWiFi() {
   if (wifi_configured) {
     // Try to connect to saved network
-    Serial.println("Connecting to saved WiFi network: " + wifi_ssid);
+    Serial.println("=== WiFi Setup ===");
+    Serial.println("Attempting to connect to saved WiFi network: " + wifi_ssid);
+    Serial.println("WiFi mode: Station");
+    
+    WiFi.mode(WIFI_STA);
     WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
     
     int attempts = 0;
@@ -203,23 +263,33 @@ void setupWiFi() {
     }
     
     if (WiFi.status() == WL_CONNECTED) {
-      Serial.println("\nWiFi connected successfully!");
+      Serial.println("\n✅ WiFi connected successfully!");
+      Serial.println("SSID: " + WiFi.SSID());
       Serial.println("IP address: " + WiFi.localIP().toString());
+      Serial.println("Gateway: " + WiFi.gatewayIP().toString());
+      Serial.println("DNS: " + WiFi.dnsIP().toString());
+      Serial.println("RSSI: " + String(WiFi.RSSI()) + " dBm");
+      Serial.println("Channel: " + String(WiFi.channel()));
       digitalWrite(STATUS_LED, HIGH);
+      Serial.println("=== WiFi Setup Complete ===");
     } else {
-      Serial.println("\nFailed to connect to saved WiFi");
+      Serial.println("\n❌ Failed to connect to saved WiFi");
+      Serial.println("WiFi status: " + String(WiFi.status()));
       wifi_configured = false;
     }
   }
   
   if (!wifi_configured) {
     // Start configuration mode
-    Serial.println("Starting WiFi configuration mode");
+    Serial.println("=== Starting WiFi Configuration Mode ===");
     WiFi.mode(WIFI_AP);
     WiFi.softAP(default_ssid, default_password);
+    Serial.println("AP SSID: " + String(default_ssid));
+    Serial.println("AP Password: " + String(default_password));
     Serial.println("AP IP address: " + WiFi.softAPIP().toString());
-    Serial.println("Connect to 'ESP32_Config' network with password '12345678'");
-    Serial.println("Then navigate to http://192.168.4.1 to configure");
+    Serial.println("Connect to '" + String(default_ssid) + "' network with password '" + String(default_password) + "'");
+    Serial.println("Then navigate to http://" + WiFi.softAPIP().toString() + " to configure");
+    Serial.println("=== WiFi Configuration Mode Active ===");
   }
 }
 
@@ -229,6 +299,10 @@ void setupMQTT() {
   int port = preferences.getInt("mqtt_port", MQTT_PORT);
   String client_id = preferences.getString("mqtt_client_id", MQTT_CLIENT_ID);
   String topic_prefix = preferences.getString("mqtt_topic_prefix", MQTT_TOPIC_PREFIX);
+  
+  // Store broker info for debugging
+  mqtt_broker_ip = broker;
+  mqtt_broker_port = port;
   
   // Update MQTT client settings
   mqtt_client.setServer(broker.c_str(), port);
@@ -251,6 +325,11 @@ void setupWebServer() {
   web_server.on("/configure_mqtt", HTTP_POST, handleMQTTConfig); // New handler for MQTT config
   web_server.on("/status", HTTP_GET, handleStatus);
   web_server.on("/restart", HTTP_POST, handleRestart);
+  
+  // Test endpoint for debugging
+  web_server.on("/test", HTTP_GET, []() {
+    web_server.send(200, "text/plain", "Web server is working! Firmware version: " + String(FIRMWARE_VERSION));
+  });
   
   // OTA update page
   web_server.on("/update", HTTP_GET, handleUpdatePage);
@@ -341,20 +420,47 @@ void handleMQTT() {
 }
 
 void mqttReconnect() {
-  Serial.println("Attempting MQTT connection...");
+  Serial.println("=== Attempting MQTT Connection ===");
+  Serial.println("Broker: " + mqtt_broker_ip);
+  Serial.println("Port: " + String(mqtt_broker_port));
+  Serial.println("Client ID: " + String(MQTT_CLIENT_ID));
+  Serial.println("WiFi Status: " + String(WiFi.status()));
+  Serial.println("WiFi IP: " + WiFi.localIP().toString());
   
   if (mqtt_client.connect(MQTT_CLIENT_ID)) {
-    Serial.println("MQTT connected");
+    Serial.println("✅ MQTT connected successfully!");
     mqtt_connected = true;
     
     // Subscribe to control topics
-    mqtt_client.subscribe((mqtt_turnout_topic + "/+/control").c_str());
-    mqtt_client.subscribe((mqtt_signal_topic + "/+/control").c_str());
+    String turnout_topic = mqtt_turnout_topic + "/+/control";
+    String signal_topic = mqtt_signal_topic + "/+/control";
+    
+    Serial.println("Subscribing to turnout topic: " + turnout_topic);
+    mqtt_client.subscribe(turnout_topic.c_str());
+    
+    Serial.println("Subscribing to signal topic: " + signal_topic);
+    mqtt_client.subscribe(signal_topic.c_str());
+    
+    Serial.println("Subscriptions completed");
     
     // Publish initial status
-    publishStatus();
+    Serial.println("Publishing initial status...");
+    publishInitialStatus();
+    
+    Serial.println("=== MQTT Setup Complete ===");
   } else {
-    Serial.printf("MQTT connection failed, rc=%d\n", mqtt_client.state());
+    Serial.printf("❌ MQTT connection failed, rc=%d\n", mqtt_client.state());
+    Serial.println("Error codes:");
+    Serial.println("  -4: MQTT_CONNECTION_TIMEOUT");
+    Serial.println("  -3: MQTT_CONNECTION_LOST");
+    Serial.println("  -2: MQTT_CONNECT_FAILED");
+    Serial.println("  -1: MQTT_DISCONNECTED");
+    Serial.println("   0: MQTT_CONNECTED");
+    Serial.println("   1: MQTT_CONNECT_BAD_PROTOCOL");
+    Serial.println("   2: MQTT_CONNECT_BAD_CLIENT_ID");
+    Serial.println("   3: MQTT_CONNECT_UNAVAILABLE");
+    Serial.println("   4: MQTT_CONNECT_BAD_CREDENTIALS");
+    Serial.println("   5: MQTT_CONNECT_UNAUTHORIZED");
     mqtt_connected = false;
   }
 }
@@ -367,26 +473,33 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     payload_str += (char)payload[i];
   }
   
-  Serial.println("MQTT message received:");
+  Serial.println("=== MQTT Message Received ===");
   Serial.println("  Topic: " + topic_str);
   Serial.println("  Payload: " + payload_str);
+  Serial.println("  Length: " + String(length) + " bytes");
+  Serial.println("  From Broker: " + mqtt_broker_ip + ":" + String(mqtt_broker_port));
+  Serial.println("================================");
   
   // Parse JSON payload
   DynamicJsonDocument doc(256);
   DeserializationError error = deserializeJson(doc, payload_str);
   
   if (error) {
-    Serial.println("JSON parsing failed");
+    Serial.println("JSON parsing failed: " + String(error.c_str()));
     return;
   }
   
+  Serial.println("JSON parsed successfully");
+  
   // Handle turnout control
   if (topic_str.indexOf("/turnouts/") > 0) {
+    Serial.println("Processing turnout control message");
     handleTurnoutControl(topic_str, doc);
   }
   
   // Handle signal control
   if (topic_str.indexOf("/signals/") > 0) {
+    Serial.println("Processing signal control message");
     handleSignalControl(topic_str, doc);
   }
 }
@@ -397,47 +510,83 @@ void handleTurnoutControl(String topic, JsonDocument& doc) {
   if (topic.indexOf("/turnouts/1/") > 0) turnout_num = 0;
   else if (topic.indexOf("/turnouts/2/") > 0) turnout_num = 1;
   
+  Serial.println("=== Turnout Control ===");
+  Serial.println("Turnout: " + String(turnout_num + 1));
+  Serial.println("Topic: " + topic);
+  
   if (doc.containsKey("position")) {
     String position = doc["position"].as<String>();
     bool new_state = (position == "thrown" || position == "true");
     
+    Serial.println("Requested position: " + position + " (state: " + (new_state ? "thrown" : "normal") + ")");
+    Serial.println("Current state: " + String(turnout_states[turnout_num] ? "thrown" : "normal"));
+    
     if (turnout_num == 0) {
       digitalWrite(TURNOUT_PIN_1, new_state ? HIGH : LOW);
       turnout_states[0] = new_state;
+      Serial.println("Turnout 1 pin " + String(TURNOUT_PIN_1) + " set to " + (new_state ? "HIGH" : "LOW"));
     } else if (turnout_num == 1) {
       digitalWrite(TURNOUT_PIN_2, new_state ? HIGH : LOW);
       turnout_states[1] = new_state;
+      Serial.println("Turnout 2 pin " + String(TURNOUT_PIN_2) + " set to " + (new_state ? "HIGH" : "LOW"));
     }
+    
+    Serial.println("Turnout " + String(turnout_num + 1) + " moved to " + (new_state ? "thrown" : "normal"));
     
     // Publish status update
     publishTurnoutStatus(turnout_num + 1);
+  } else {
+    Serial.println("❌ No position specified in turnout control message");
   }
+  Serial.println("=====================");
 }
 
 void handleSignalControl(String topic, JsonDocument& doc) {
+  Serial.println("=== Signal Control ===");
+  Serial.println("Topic: " + topic);
+  
   if (doc.containsKey("aspect")) {
     String aspect = doc["aspect"].as<String>();
+    int old_state = signal_state;
+    
+    Serial.println("Requested aspect: " + aspect);
+    Serial.println("Current aspect: " + String(old_state == 0 ? "red" : old_state == 1 ? "yellow" : "green"));
     
     if (aspect == "red") {
       signal_state = 0;
       digitalWrite(SIGNAL_PIN_RED, HIGH);
       digitalWrite(SIGNAL_PIN_YELLOW, LOW);
       digitalWrite(SIGNAL_PIN_GREEN, LOW);
+      Serial.println("Signal pin " + String(SIGNAL_PIN_RED) + " set to HIGH (RED)");
+      Serial.println("Signal pin " + String(SIGNAL_PIN_YELLOW) + " set to LOW");
+      Serial.println("Signal pin " + String(SIGNAL_PIN_GREEN) + " set to LOW");
     } else if (aspect == "yellow") {
       signal_state = 1;
       digitalWrite(SIGNAL_PIN_RED, LOW);
       digitalWrite(SIGNAL_PIN_YELLOW, HIGH);
       digitalWrite(SIGNAL_PIN_GREEN, LOW);
+      Serial.println("Signal pin " + String(SIGNAL_PIN_RED) + " set to LOW");
+      Serial.println("Signal pin " + String(SIGNAL_PIN_YELLOW) + " set to HIGH (YELLOW)");
+      Serial.println("Signal pin " + String(SIGNAL_PIN_GREEN) + " set to LOW");
     } else if (aspect == "green") {
       signal_state = 2;
       digitalWrite(SIGNAL_PIN_RED, LOW);
       digitalWrite(SIGNAL_PIN_YELLOW, LOW);
       digitalWrite(SIGNAL_PIN_GREEN, HIGH);
+      Serial.println("Signal pin " + String(SIGNAL_PIN_RED) + " set to LOW");
+      Serial.println("Signal pin " + String(SIGNAL_PIN_YELLOW) + " set to LOW");
+      Serial.println("Signal pin " + String(SIGNAL_PIN_GREEN) + " set to HIGH (GREEN)");
     }
+    
+    Serial.println("Signal changed from " + String(old_state == 0 ? "red" : old_state == 1 ? "yellow" : "green") + 
+                  " to " + aspect);
     
     // Publish status update
     publishSignalStatus();
+  } else {
+    Serial.println("❌ No aspect specified in signal control message");
   }
+  Serial.println("===================");
 }
 
 void handleSensors() {
@@ -450,6 +599,13 @@ void handleSensors() {
   // Check for changes and publish updates
   for (int i = 0; i < 4; i++) {
     if (sensor_states[i] != last_sensor_states[i]) {
+      Serial.println("=== Sensor State Change ===");
+      Serial.println("Sensor " + String(i + 1) + " changed from " + 
+                    (last_sensor_states[i] ? "occupied" : "clear") + 
+                    " to " + (sensor_states[i] ? "occupied" : "clear"));
+      Serial.println("Pin: " + String(i == 0 ? SENSOR_PIN_1 : i == 1 ? SENSOR_PIN_2 : i == 2 ? SENSOR_PIN_3 : SENSOR_PIN_4));
+      Serial.println("==========================");
+      
       publishSensorStatus(i + 1);
       last_sensor_states[i] = sensor_states[i];
     }
@@ -486,6 +642,8 @@ void publishTurnoutStatus(int turnout_num) {
   
   String topic = mqtt_turnout_topic + "/" + String(turnout_num) + "/status";
   mqtt_client.publish(topic.c_str(), json_string.c_str());
+  
+  Serial.println("Published turnout " + String(turnout_num) + " status: " + json_string);
 }
 
 void publishSignalStatus() {
@@ -501,10 +659,66 @@ void publishSignalStatus() {
   
   String topic = mqtt_signal_topic + "/1/status";
   mqtt_client.publish(topic.c_str(), json_string.c_str());
+  
+  Serial.println("Published signal status: " + json_string);
+}
+
+void publishInitialStatus() {
+  if (!mqtt_connected) return;
+  
+  Serial.println("=== Publishing Initial Status for All Devices ===");
+  
+  // Publish individual sensor statuses
+  for (int i = 1; i <= 4; i++) {
+    publishSensorStatus(i);
+    delay(100);  // Small delay between publishes
+  }
+  
+  // Publish individual turnout statuses
+  for (int i = 1; i <= 2; i++) {
+    publishTurnoutStatus(i);
+    delay(100);  // Small delay between publishes
+  }
+  
+  // Publish signal status
+  publishSignalStatus();
+  
+  // Publish overall device status
+  publishStatus();
+  
+  Serial.println("=== Initial Status Published for All Devices ===");
+}
+
+void publishAllDeviceStatus() {
+  if (!mqtt_connected) return;
+  
+  Serial.println("=== Publishing All Device Status ===");
+  
+  // Publish individual sensor statuses
+  for (int i = 1; i <= 4; i++) {
+    publishSensorStatus(i);
+    delay(100);  // Small delay between publishes
+  }
+  
+  // Publish individual turnout statuses
+  for (int i = 1; i <= 2; i++) {
+    publishTurnoutStatus(i);
+    delay(100);  // Small delay between publishes
+  }
+  
+  // Publish signal status
+  publishSignalStatus();
+  
+  // Publish overall device status
+  publishStatus();
+  
+  Serial.println("=== All Device Status Published ===");
 }
 
 void publishStatus() {
   if (!mqtt_connected) return;
+  
+  Serial.println("=== Publishing Device Status ===");
   
   DynamicJsonDocument doc(512);
   doc["device"] = DEVICE_NAME;
@@ -537,7 +751,24 @@ void publishStatus() {
   String json_string;
   serializeJson(doc, json_string);
   
+  Serial.println("Device: " + String(DEVICE_NAME));
+  Serial.println("Version: " + String(FIRMWARE_VERSION));
+  Serial.println("IP: " + WiFi.localIP().toString());
+  Serial.println("RSSI: " + String(WiFi.RSSI()) + " dBm");
+  Serial.println("Uptime: " + String(millis()) + " ms");
+  Serial.println("Sensors: " + String(sensor_states[0] ? "O" : "C") + " " + 
+                String(sensor_states[1] ? "O" : "C") + " " + 
+                String(sensor_states[2] ? "O" : "C") + " " + 
+                String(sensor_states[3] ? "O" : "C") + " (O=Occupied, C=Clear)");
+  Serial.println("Turnouts: " + String(turnout_states[0] ? "T" : "N") + " " + 
+                String(turnout_states[1] ? "T" : "N") + " (T=Thrown, N=Normal)");
+  Serial.println("Signal: " + String(signal_state == 0 ? "RED" : signal_state == 1 ? "YELLOW" : "GREEN"));
+  
   mqtt_client.publish(mqtt_status_topic.c_str(), json_string.c_str());
+  
+  Serial.println("Status published to topic: " + mqtt_status_topic);
+  Serial.println("JSON: " + json_string);
+  Serial.println("===============================");
 }
 
 void updateStatus() {
@@ -635,6 +866,7 @@ void handleRoot() {
   html += "                <input type=\"file\" id=\"firmware\" name=\"firmware\" accept=\".bin\" required>";
   html += "                <button type=\"submit\">Upload Firmware</button>";
   html += "            </form>";
+  html += "            <div id=\"progressBar\" style=\"width: 0%; height: 20px; background-color: #4CAF50; transition: width 0.3s; margin-top: 10px; display: none;\"></div>";
   html += "        </div>";
   html += "    </div>";
   html += "    ";
@@ -704,20 +936,39 @@ void handleRoot() {
   html += "        document.getElementById('updateForm').onsubmit = function(e) {";
   html += "            e.preventDefault();";
   html += "            ";
-  html += "            const formData = new FormData();";
-  html += "            formData.append('firmware', document.getElementById('firmware').files[0]);";
+  html += "            const file = document.getElementById('firmware').files[0];";
+  html += "            if (!file) {";
+  html += "                alert('Please select a file');";
+  html += "                return;";
+  html += "            }";
   html += "            ";
-  html += "            fetch('/doUpdate', {";
-  html += "                method: 'POST',";
-  html += "                body: formData";
-  html += "            })";
-  html += "            .then(response => response.text())";
-  html += "            .then(data => {";
-  html += "                document.getElementById('status').innerHTML = '<div class=\"status success\">' + data + '</div>';";
-  html += "            })";
-  html += "            .catch(error => {";
-  html += "                document.getElementById('status').innerHTML = '<div class=\"status error\">Error: ' + error + '</div>';";
-  html += "            });";
+  html += "            const formData = new FormData();";
+  html += "            formData.append('firmware', file);";
+  html += "            ";
+  html += "            const xhr = new XMLHttpRequest();";
+  html += "            ";
+  html += "            xhr.upload.onprogress = function(e) {";
+  html += "                if (e.lengthComputable) {";
+  html += "                    const percentComplete = (e.loaded / e.total) * 100;";
+  html += "                    document.getElementById('progressBar').style.width = percentComplete + '%';";
+  html += "                    document.getElementById('progressBar').textContent = percentComplete + '%';";
+  html += "                }";
+  html += "            };";
+  html += "            ";
+  html += "            xhr.onload = function() {";
+  html += "                if (xhr.status === 200) {";
+  html += "                    document.getElementById('status').innerHTML = '<div style=\"color: green;\">Update successful! Device will restart.</div>';";
+  html += "                } else {";
+  html += "                    document.getElementById('status').innerHTML = '<div style=\"color: red;\">Update failed: ' + xhr.responseText + '</div>';";
+  html += "                }";
+  html += "            };";
+  html += "            ";
+  html += "            xhr.onerror = function() {";
+  html += "                document.getElementById('status').innerHTML = '<div style=\"color: red;\">Update failed: Network error</div>';";
+  html += "            };";
+  html += "            ";
+  html += "            xhr.open('POST', '/doUpdate');";
+  html += "            xhr.send(formData);";
   html += "        };";
   html += "    </script>";
   html += "</body>";
@@ -757,6 +1008,12 @@ void handleMQTTConfig() {
     String new_client_id = web_server.arg("mqtt_client_id");
     String new_topic_prefix = web_server.arg("mqtt_topic_prefix");
 
+    Serial.println("=== MQTT Configuration Update ===");
+    Serial.println("New Broker: " + new_broker);
+    Serial.println("New Port: " + String(new_port));
+    Serial.println("New Client ID: " + new_client_id);
+    Serial.println("New Topic Prefix: " + new_topic_prefix);
+
     // Save to preferences
     preferences.putString("mqtt_broker", new_broker);
     preferences.putInt("mqtt_port", new_port);
@@ -766,6 +1023,10 @@ void handleMQTTConfig() {
     // Update MQTT client settings
     mqtt_client.setServer(new_broker.c_str(), new_port);
     
+    // Update our stored broker info
+    mqtt_broker_ip = new_broker;
+    mqtt_broker_port = new_port;
+    
     // Update topic strings
     mqtt_base_topic = String(new_topic_prefix) + "/" + WiFi.macAddress();
     mqtt_sensor_topic = mqtt_base_topic + "/sensors";
@@ -773,23 +1034,43 @@ void handleMQTTConfig() {
     mqtt_signal_topic = mqtt_base_topic + "/signals";
     mqtt_status_topic = mqtt_base_topic + "/status";
 
-    // Reconnect MQTT
+    Serial.println("Updated topic strings:");
+    Serial.println("  Base: " + mqtt_base_topic);
+    Serial.println("  Sensors: " + mqtt_sensor_topic);
+    Serial.println("  Turnouts: " + mqtt_turnout_topic);
+    Serial.println("  Signals: " + mqtt_signal_topic);
+    Serial.println("  Status: " + mqtt_status_topic);
+
+    // Disconnect current MQTT connection
+    Serial.println("Disconnecting current MQTT connection...");
     mqtt_client.disconnect();
+    mqtt_connected = false;
     delay(1000);
     
     // Try to reconnect with new settings
+    Serial.println("Attempting to reconnect with new MQTT settings...");
     if (mqtt_client.connect(new_client_id.c_str())) {
-      Serial.println("MQTT reconnected with new configuration");
+      Serial.println("✅ MQTT reconnected with new configuration successfully!");
       mqtt_connected = true;
       
       // Resubscribe to control topics
-      mqtt_client.subscribe((mqtt_turnout_topic + "/+/control").c_str());
-      mqtt_client.subscribe((mqtt_signal_topic + "/+/control").c_str());
+      String turnout_topic = mqtt_turnout_topic + "/+/control";
+      String signal_topic = mqtt_signal_topic + "/+/control";
+      
+      Serial.println("Resubscribing to turnout topic: " + turnout_topic);
+      mqtt_client.subscribe(turnout_topic.c_str());
+      
+      Serial.println("Resubscribing to signal topic: " + signal_topic);
+      mqtt_client.subscribe(signal_topic.c_str());
       
       // Publish updated status
-      publishStatus();
+      Serial.println("Publishing updated status...");
+      publishInitialStatus();
+      
+      Serial.println("=== MQTT Reconfiguration Complete ===");
     } else {
-      Serial.println("Failed to reconnect to MQTT with new configuration");
+      Serial.println("❌ Failed to reconnect to MQTT with new configuration");
+      Serial.printf("Error code: %d\n", mqtt_client.state());
       mqtt_connected = false;
     }
 
@@ -881,6 +1162,7 @@ void handleUpdatePage() {
   html += "                if (e.lengthComputable) {";
   html += "                    const percentComplete = (e.loaded / e.total) * 100;";
   html += "                    document.getElementById('progressBar').style.width = percentComplete + '%';";
+  html += "                    document.getElementById('progressBar').textContent = percentComplete + '%';";
   html += "                }";
   html += "            };";
   html += "            ";
@@ -893,7 +1175,7 @@ void handleUpdatePage() {
   html += "            };";
   html += "            ";
   html += "            xhr.onerror = function() {";
-  html += "                document.getElementById('status').innerHTML = '<div style=\"color: red;\">Update failed</div>';";
+  html += "                document.getElementById('status').innerHTML = '<div style=\"color: red;\">Update failed: Network error</div>';";
   html += "            };";
   html += "            ";
   html += "            xhr.open('POST', '/doUpdate');";
@@ -931,10 +1213,20 @@ void handleUpdateBody() {
   // Feed watchdog at the start of each upload event
   yield();
   
+  Serial.printf("OTA Upload Status: %d, Size: %u/%u\n", 
+               upload.status, upload.currentSize, upload.totalSize);
+  
   if (upload.status == UPLOAD_FILE_START) {
     Serial.println("=== OTA Update Started ===");
     Serial.println("File name: " + upload.filename);
     Serial.println("File size: " + String(upload.totalSize));
+    
+    // Validate file size
+    if (upload.totalSize == 0) {
+      Serial.println("❌ Error: File size is 0 - invalid upload");
+      web_server.send(400, "text/plain", "Error: Invalid file size (0 bytes)");
+      return;
+    }
     
     // Print system information for debugging
     Serial.println("System Info:");
@@ -947,7 +1239,7 @@ void handleUpdateBody() {
     if (upload.totalSize > (ESP.getFreeSketchSpace() - 0x1000)) {
       String error_msg = "Not enough space to begin OTA. Need: " + String(upload.totalSize) + 
                         " bytes, Available: " + String(ESP.getFreeSketchSpace() - 0x1000) + " bytes";
-      Serial.println(error_msg);
+      Serial.println("❌ " + error_msg);
       web_server.send(400, "text/plain", error_msg);
       return;
     }
@@ -955,7 +1247,7 @@ void handleUpdateBody() {
     // Begin the update
     if (!Update.begin(upload.totalSize)) {
       String error_msg = "Update begin failed: " + String(Update.errorString());
-      Serial.println(error_msg);
+      Serial.println("❌ " + error_msg);
       web_server.send(400, "text/plain", error_msg);
       return;
     }
@@ -963,13 +1255,19 @@ void handleUpdateBody() {
     totalSize = upload.totalSize;
     currentSize = 0;
     
-    Serial.println("Update begin successful, total size: " + String(totalSize));
+    Serial.println("✅ Update begin successful, total size: " + String(totalSize));
     
   } else if (upload.status == UPLOAD_FILE_WRITE) {
+    // Validate that we have data to write
+    if (upload.currentSize == 0) {
+      Serial.println("⚠️ Warning: Received 0 bytes in write chunk");
+      return; // Skip this chunk but don't fail
+    }
+    
     // Write the received data
     if (Update.write(upload.buf, upload.currentSize)) {
       currentSize += upload.currentSize;
-      Serial.printf("Progress: %u%% (%u/%u bytes)\n", 
+      Serial.printf("📤 Progress: %u%% (%u/%u bytes)\n", 
                    (currentSize * 100) / totalSize, currentSize, totalSize);
       
       // Feed the watchdog to prevent reset
@@ -980,30 +1278,36 @@ void handleUpdateBody() {
       
     } else {
       String error_msg = "Update write failed: " + String(Update.errorString());
-      Serial.println(error_msg);
+      Serial.println("❌ " + error_msg);
       Serial.println("Current size: " + String(currentSize) + "/" + String(totalSize));
-      web_server.send(500, "text/plain", error_msg);
-      return;
+      Serial.println("Chunk size: " + String(upload.currentSize));
+      Serial.println("Buffer address: " + String((uint32_t)upload.buf));
+      
+      // Don't send response here as it might interfere with the upload
+      // Just log the error and continue
     }
     
   } else if (upload.status == UPLOAD_FILE_END) {
     // Finalize the update
-    Serial.println("Upload complete, finalizing update...");
+    Serial.println("=== Upload Complete ===");
     Serial.println("Final size: " + String(currentSize) + "/" + String(totalSize));
     
+    if (currentSize != totalSize) {
+      Serial.printf("⚠️ Warning: Size mismatch. Expected: %u, Received: %u\n", totalSize, currentSize);
+    }
+    
     if (Update.end()) {
-      Serial.println("Update end successful");
-      Serial.println("Update completed successfully!");
+      Serial.println("✅ Update end successful");
       
       // Verify the update
       if (Update.hasError()) {
         String error_msg = "Update verification failed: " + String(Update.errorString());
-        Serial.println(error_msg);
+        Serial.println("❌ " + error_msg);
         web_server.send(500, "text/plain", error_msg);
         return;
       }
       
-      Serial.println("Update verified successfully!");
+      Serial.println("✅ Update verified successfully!");
       Serial.println("Device will restart in 3 seconds...");
       web_server.send(200, "text/plain", "Update completed successfully! Device will restart in 3 seconds...");
       
@@ -1013,7 +1317,7 @@ void handleUpdateBody() {
       
     } else {
       String error_msg = "Update end failed: " + String(Update.errorString());
-      Serial.println(error_msg);
+      Serial.println("❌ " + error_msg);
       web_server.send(500, "text/plain", error_msg);
       return;
     }
