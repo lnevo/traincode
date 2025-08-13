@@ -1,0 +1,107 @@
+# Arduino IDE
+*.hex
+*.elf
+*.bin
+*.map
+*.eep
+*.lss
+*.sym
+*.tmp
+*.a
+*.o
+*.d
+*.elf
+*.hex
+*.bin
+*.map
+*.eep
+*.lss
+*.sym
+*.tmp
+*.a
+*.o
+*.d
+
+# Build directories
+build/
+*.build/
+
+# Arduino IDE 1.x
+*.cpp
+*.h
+*.ino.cpp
+*.ino.h
+
+# Arduino IDE 2.x
+*.cpp
+*.h
+*.ino.cpp
+*.ino.h
+
+# PlatformIO
+.pio/
+.vscode/
+*.projdata
+*.projdata.old
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# User-specific files
+config.h
+secrets.h
+wifi_config.h
+
+# Keep example config files
+!config.example.h
