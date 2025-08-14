@@ -391,7 +391,7 @@ void setupWebServer() {
   });
   
   // OTA update page
-  web_server.on("/update", HTTP_GET, handleUpdatePage);
+
   web_server.on("/doUpdate", HTTP_POST, handleDoUpdate, handleUpdateBody);
   
   web_server.begin();
@@ -1710,105 +1710,7 @@ void handleRestart() {
   ESP.restart();
 }
 
-void handleUpdatePage() {
-  String html = "<!DOCTYPE html><html><head>";
-  html += "<title>Firmware Update</title>";
-  html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
-  html += "<style>";
-  html += "body{font-family:Arial,sans-serif;margin:20px;background-color:#f5f5f5;}";
-  html += ".container{max-width:600px;margin:0 auto;background:white;padding:20px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,0.1);}";
-  html += "h1{color:#333;text-align:center;}";
-  html += ".upload-form{margin:20px 0;}";
-  html += "input[type=file]{width:100%;padding:10px;margin:10px 0;border:2px dashed #ddd;border-radius:4px;}";
-  html += "button{background-color:#4CAF50;color:white;padding:12px 24px;border:none;border-radius:4px;cursor:pointer;font-size:16px;width:100%;margin:10px 0;}";
-  html += "button:hover{background-color:#45a049;}";
-  html += "button:disabled{background-color:#cccccc;cursor:not-allowed;}";
-  html += ".progress{width:100%;background-color:#f0f0f0;border-radius:4px;margin:10px 0;}";
-  html += ".progress-bar{height:20px;background-color:#4CAF50;border-radius:4px;width:0%;transition:width 0.3s;}";
-  html += ".status{text-align:center;margin:10px 0;padding:10px;border-radius:4px;}";
-  html += ".success{background-color:#d4edda;color:#155724;border:1px solid #c3e6cb;}";
-  html += ".error{background-color:#f8d7da;color:#721c24;border:1px solid #f5c6cb;}";
-  html += ".info{background-color:#d1ecf1;color:#0c5460;border:1px solid #bee5eb;}";
-  html += "</style>";
-  html += "</head><body>";
-  html += "<div class=\"container\">";
-  html += "<h1>Firmware Update</h1>";
-  html += "<div class=\"upload-form\">";
-  html += "<input type=\"file\" id=\"firmware\" accept=\".bin\" onchange=\"validateFile(this)\">";
-  html += "<button onclick=\"uploadFirmware()\" id=\"uploadBtn\" disabled>Upload Firmware</button>";
-  html += "</div>";
-  html += "<div class=\"progress\">";
-  html += "<div class=\"progress-bar\" id=\"progressBar\"></div>";
-  html += "</div>";
-  html += "<div id=\"status\"></div>";
-  html += "<div style=\"text-align:center;margin-top:20px;\">";
-  html += "<a href=\"/\" style=\"color:#4CAF50;text-decoration:none;\">← Back to Main</a>";
-  html += "</div>";
-  html += "</div>";
-  html += "<script>";
-  html += "function validateFile(input) {";
-  html += "    const file = input.files[0];";
-  html += "    const uploadBtn = document.getElementById('uploadBtn');";
-  html += "    if (file && file.name.endsWith('.bin')) {";
-  html += "        uploadBtn.disabled = false;";
-  html += "        document.getElementById('status').innerHTML = '<div class=\"status info\">File selected: ' + file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)</div>';";
-  html += "    } else {";
-  html += "        uploadBtn.disabled = true;";
-  html += "        document.getElementById('status').innerHTML = '<div class=\"status error\">Please select a valid .bin file</div>';";
-  html += "    }";
-  html += "}";
-  html += "function uploadFirmware() {";
-  html += "    const fileInput = document.getElementById('firmware');";
-  html += "    const file = fileInput.files[0];";
-  html += "    if (!file) return;";
-  html += "    ";
-  html += "    const uploadBtn = document.getElementById('uploadBtn');";
-  html += "    const statusDiv = document.getElementById('status');";
-  html += "    const progressBar = document.getElementById('progressBar');";
-  html += "    ";
-  html += "    uploadBtn.disabled = true;";
-  html += "    statusDiv.innerHTML = '<div class=\"status info\">Starting upload...</div>';";
-      html += "    progressBar.style.width = '0%';";
-    html += "    ";
-    html += "    const formData = new FormData();";
-  html += "    formData.append('firmware', file);";
-  html += "    ";
-  html += "    const xhr = new XMLHttpRequest();";
-  html += "    ";
-  html += "    xhr.upload.addEventListener('progress', function(e) {";
-  html += "        if (e.lengthComputable) {";
-  html += "            const percentComplete = (e.loaded / e.total) * 100;";
-  html += "            progressBar.style.width = percentComplete + '%';";
-  html += "            statusDiv.innerHTML = '<div class=\"status info\">Uploading: ' + Math.round(percentComplete) + '%</div>';";
-  html += "        }";
-  html += "    });";
-  html += "    ";
-  html += "    xhr.addEventListener('load', function() {";
-  html += "        if (xhr.status === 200) {";
-  html += "            statusDiv.innerHTML = '<div class=\"status success\">Upload completed! Device will restart in 5 seconds...</div>';";
-  html += "            progressBar.style.width = '100%';";
-  html += "            setTimeout(() => {";
-  html += "                window.location.href = '/';";
-  html += "            }, 5000);";
-  html += "        } else {";
-  html += "            statusDiv.innerHTML = '<div class=\"status error\">Upload failed: ' + xhr.responseText + '</div>';";
-  html += "            uploadBtn.disabled = false;";
-  html += "        }";
-  html += "    });";
-  html += "    ";
-  html += "    xhr.addEventListener('error', function() {";
-  html += "        statusDiv.innerHTML = '<div class=\"status error\">Upload failed: Network error</div>';";
-  html += "        uploadBtn.disabled = false;";
-  html += "    });";
-  html += "    ";
-  html += "    xhr.open('POST', '/do_update');";
-  html += "    xhr.send(formData);";
-  html += "}";
-  html += "</script>";
-  html += "</body></html>";
-  
-  web_server.send(200, "text/html", html);
-}
+
 
 void handleDoUpdate() {
   web_server.sendHeader("Connection", "close");
