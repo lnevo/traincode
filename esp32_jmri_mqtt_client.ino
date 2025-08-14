@@ -1242,7 +1242,7 @@ void handleRoot() {
   
   html += "<div class=\"section\">";
   html += "<h2>Firmware Management</h2>";
-  html += "<p style=\"color:var(--text-secondary);margin-bottom:20px;\">Current Version: " + String(FIRMWARE_VERSION) + "</p>";
+  html += "<p id=\"firmware-version\" style=\"color:var(--text-secondary);margin-bottom:20px;\">Current Version: " + String(FIRMWARE_VERSION) + "</p>";
   
   // Firmware Upload Section
   html += "<div class=\"section\">";
@@ -1390,6 +1390,10 @@ void handleRoot() {
   html += "    const progressBar = document.getElementById('progressBar');";
   html += "    const statusDiv = document.getElementById('uploadStatus');";
   html += "    if (!file) return;";
+  html += "    if (currentUpload || versionPolling) {";
+  html += "        console.log('Upload already in progress, ignoring...');";
+  html += "        return;";
+  html += "    }";
   html += "    uploadBtn.disabled = true;";
   html += "    cancelBtn.disabled = false;";
   html += "    progressBar.style.width = '0%';";
@@ -1477,16 +1481,24 @@ void handleRoot() {
   html += "            }";
   html += "            throw new Error('Device not ready');";
   html += "        }).then(data => {";
-  html += "            console.log('Device is back online! New version:', data.firmware_version);";
+  html += "            console.log('Device is back online! Full response:', data);";
+  html += "            console.log('Version field specifically:', data.version);";
   html += "            clearInterval(pollInterval);";
   html += "            versionPolling = false;";
-  html += "            const newVersion = data.firmware_version || 'Unknown';";
-  html += "            statusDiv.innerHTML = '<div style=\"color:var(--success);padding:10px;border-radius:4px;background:var(--bg-secondary);\">Update successful! New firmware version: ' + newVersion + '. Refreshing page...</div>';";
-  html += "            setTimeout(() => {";
-  html += "                console.log('Refreshing to firmware tab...');";
-  html += "                localStorage.setItem('activeTab', 'firmware');";
-  html += "                location.reload();";
-  html += "            }, 3000);";
+  html += "            const newVersion = data.version || data.firmware_version || Object.keys(data).find(k => k.includes('version')) ? data[Object.keys(data).find(k => k.includes('version'))] : 'Debug: ' + JSON.stringify(Object.keys(data));";
+  html += "            statusDiv.innerHTML = '<div style=\"color:var(--success);padding:10px;border-radius:4px;background:var(--bg-secondary);\">Update successful! New firmware version: ' + newVersion + '</div>';";
+  html += "            const versionDisplay = document.getElementById('firmware-version');";
+  html += "            if (versionDisplay) {";
+  html += "                versionDisplay.textContent = 'Current Version: ' + newVersion;";
+  html += "                versionDisplay.style.color = 'var(--success)';";
+  html += "                versionDisplay.style.fontWeight = 'bold';";
+  html += "                console.log('Version display updated to:', newVersion);";
+  html += "                setTimeout(() => {";
+  html += "                    versionDisplay.style.color = 'var(--text-secondary)';";
+  html += "                    versionDisplay.style.fontWeight = 'normal';";
+  html += "                }, 3000);";
+  html += "            }";
+  html += "            uploadBtn.disabled = false;";
   html += "        }).catch(error => {";
   html += "            console.log('Attempt', attempts, '- Device not ready yet');";
   html += "            if (attempts >= maxAttempts) {";
@@ -1496,7 +1508,7 @@ void handleRoot() {
   html += "                statusDiv.innerHTML = '<div style=\"color:var(--warning);padding:10px;border-radius:4px;background:var(--bg-secondary);\">Update may have completed. <button onclick=\"localStorage.setItem(\\'activeTab\\',\\'firmware\\');location.reload()\" style=\"margin-left:10px;padding:5px 10px;background:var(--accent-primary);color:white;border:none;border-radius:3px;cursor:pointer;\">Refresh to Firmware Tab</button></div>';";
   html += "            }";
   html += "        });";
-  html += "    }, 5000);";
+  html += "    }, 2000);";
   html += "}";
   
 
