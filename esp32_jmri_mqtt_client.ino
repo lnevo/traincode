@@ -112,7 +112,7 @@ void setup() {
     Serial.println("WiFi connected, attempting MQTT connection...");
     
     // Now setup MQTT with the loaded credentials
-    setupMQTT();
+  setupMQTT();
     
     // Test broker connectivity before attempting connection
     testMQTTBrokerConnectivity();
@@ -382,6 +382,7 @@ void setupWebServer() {
   web_server.on("/configure", HTTP_POST, handleWiFiConfig);
   web_server.on("/configure_mqtt", HTTP_POST, handleMQTTConfig); // New handler for MQTT config
   web_server.on("/status", HTTP_GET, handleStatus);
+  web_server.on("/control", HTTP_POST, handleDeviceControl); // Device control endpoint
   web_server.on("/restart", HTTP_POST, handleRestart);
   
   // Test endpoint for debugging
@@ -531,15 +532,25 @@ void mqttReconnect() {
     
     Serial.println("Subscriptions completed");
     
-    // Only publish initial status on first connection, not reconnections
-    static bool initial_status_published = false;
-    if (!initial_status_published) {
-      Serial.println("Publishing initial status...");
-      publishInitialStatus();
-      initial_status_published = true;
-    } else {
-      Serial.println("Skipping initial status publish (already done)");
+    // Request retained messages for initial state sync
+    Serial.println("Requesting retained messages for state synchronization...");
+    delay(1000); // Give broker time to send retained messages
+    
+    // Process retained messages multiple times to ensure we get them all
+    for (int i = 0; i < 10; i++) {
+      mqtt_client.loop();
+      delay(100);
     }
+    
+    Serial.println("=== Current States After MQTT Sync ===");
+    Serial.println("Turnout 1: " + String(turnout_states[0] ? "THROWN" : "CLOSED"));
+    Serial.println("Turnout 2: " + String(turnout_states[1] ? "THROWN" : "CLOSED"));
+    Serial.println("Signal: " + String((signal_state == 0) ? "RED" : (signal_state == 1) ? "YELLOW" : "GREEN"));
+    Serial.println("=====================================");
+    
+    // Skip initial status publish - we now sync from retained messages
+    // The ESP32 state is now controlled by JMRI via retained messages
+    Serial.println("Skipping initial status publish - using retained message states");
     
     Serial.println("=== MQTT Setup Complete ===");
   } else {
@@ -602,12 +613,19 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.println("  Length: " + String(length) + " bytes");
   Serial.println("  From Broker: " + mqtt_broker_ip + ":" + String(mqtt_broker_port));
   Serial.println("  Timestamp: " + String(millis()) + " ms");
+  Serial.println("  Is Retained: " + String(length > 0 ? "Unknown" : "Unknown")); // MQTT lib doesn't expose retain flag
   
   // Check if this is our own message to prevent feedback loops
-  if (isOurOwnMessage(topic_str, payload_str)) {
+  // BUT: Always process messages during first 30 seconds (boot sync period)
+  bool isBootSync = (millis() < 30000);
+  if (!isBootSync && isOurOwnMessage(topic_str, payload_str)) {
     Serial.println("  🔄 Ignoring our own message to prevent feedback loop");
     Serial.println("================================");
     return;
+  }
+  
+  if (isBootSync) {
+    Serial.println("  🚀 Processing message during boot sync period");
   }
   
   // Ignore $SYS topics
@@ -631,10 +649,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     handleSignalControl(topic_str, payload_str);
   }
   
-  // Handle sensor queries - respond with current status
+  // Handle sensor truth verification - respond with actual state if different
   if (topic_str.indexOf("/sensor/") > 0) {
-    Serial.println("🎯 Processing sensor query message");
-    handleSensorQuery(topic_str, payload_str);
+    Serial.println("🎯 Processing sensor verification message");
+    handleSensorVerification(topic_str, payload_str);
   }
 }
 
@@ -669,12 +687,12 @@ void handleTurnoutControl(String topic, String payload) {
     
     if (turnout_states[turnout_num] != true) {  // Only change if state is different
       state_changed = true;
-      
-      if (turnout_num == 0) {
+    
+    if (turnout_num == 0) {
         digitalWrite(TURNOUT_PIN_1, HIGH);
         turnout_states[0] = true;
         Serial.println("✅ Turnout 1 pin " + String(TURNOUT_PIN_1) + " set to HIGH");
-      } else if (turnout_num == 1) {
+    } else if (turnout_num == 1) {
         digitalWrite(TURNOUT_PIN_2, HIGH);
         turnout_states[1] = true;
         Serial.println("✅ Turnout 2 pin " + String(TURNOUT_PIN_2) + " set to HIGH");
@@ -803,7 +821,7 @@ void handleSignalControl(String topic, String payload) {
   Serial.println("===================");
 }
 
-void handleSensorQuery(String topic, String payload) {
+void handleSensorVerification(String topic, String payload) {
   // Extract sensor number from topic (e.g., "trains/track/sensor/1" -> sensor 1)
   int sensor_num = 0;
   
@@ -823,25 +841,22 @@ void handleSensorQuery(String topic, String payload) {
   
   String actual_state = sensor_states[sensor_num - 1] ? "ACTIVE" : "INACTIVE";
   
-  Serial.println("=== Sensor Query ===");
+  Serial.println("=== Sensor Verification ===");
   Serial.println("Sensor: " + String(sensor_num));
   Serial.println("Topic: " + topic);
-  Serial.println("Requested state: " + payload);
+  Serial.println("JMRI expects: " + payload);
   Serial.println("Actual physical state: " + actual_state);
   
-  // Sensors are read-only - always respond with actual physical state
-  // This allows JMRI to detect when sensor state differs from expectations
+  // Only publish if JMRI's expectation differs from reality
   if (payload != actual_state) {
-    Serial.println("⚠️ JMRI requested '" + payload + "' but sensor is actually '" + actual_state + "'");
-    Serial.println("📤 Correcting JMRI with actual sensor state...");
+    Serial.println("⚠️ MISMATCH: JMRI expects '" + payload + "' but sensor is actually '" + actual_state + "'");
+    Serial.println("📤 Publishing correct sensor state to update JMRI...");
+    publishSensorStatus(sensor_num);
   } else {
-    Serial.println("✅ JMRI state matches actual sensor state");
-    Serial.println("📤 Confirming sensor state...");
+    Serial.println("✅ JMRI state matches actual sensor state - no publish needed");
   }
   
-  publishSensorStatus(sensor_num);
-  
-  Serial.println("====================");
+  Serial.println("============================");
 }
 
 void handleSensors() {
@@ -877,7 +892,7 @@ void publishSensorStatus(int sensor_num) {
   // Track this publication to prevent feedback loops
   trackPublication(topic, state);
   
-  mqtt_client.publish(topic.c_str(), state.c_str());
+  mqtt_client.publish(topic.c_str(), state.c_str(), true); // Retained message
   
   Serial.println("Published sensor " + String(sensor_num) + " status: " + state + " to topic: " + topic);
 }
@@ -897,7 +912,7 @@ void publishTurnoutStatus(int turnout_num) {
   // Track this publication to prevent feedback loops
   trackPublication(topic, position);
   
-  mqtt_client.publish(topic.c_str(), position.c_str());
+  mqtt_client.publish(topic.c_str(), position.c_str(), true); // Retained message
   
   Serial.println("Published turnout " + String(turnout_num) + " status: " + position + " to topic: " + topic);
 }
@@ -912,7 +927,7 @@ void publishSignalStatus() {
   // Track this publication to prevent feedback loops
   trackPublication(topic, aspect);
   
-  mqtt_client.publish(topic.c_str(), aspect.c_str());
+  mqtt_client.publish(topic.c_str(), aspect.c_str(), true); // Retained message
   
   Serial.println("Published signal status: " + aspect + " to topic: " + topic);
 }
@@ -968,6 +983,18 @@ void handleRoot() {
   html += ".error{background-color:#f8d7da;color:#721c24;border:1px solid #f5c6cb;}";
   html += ".info{background-color:#d1ecf1;color:#0c5460;border:1px solid #bee5eb;}";
   html += ".status-json{font-family:monospace;font-size:12px;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:break-word;max-width:100%;background:#f8f9fa;padding:15px;border-radius:4px;border:1px solid #dee2e6;max-height:400px;overflow-y:auto;}";
+  html += ".device-table{width:100%;border-collapse:collapse;margin-top:10px;}";
+  html += ".device-table th,.device-table td{padding:8px;text-align:left;border-bottom:1px solid #ddd;}";
+  html += ".device-table th{background-color:#f5f5f5;font-weight:bold;}";
+  html += ".control-btn{padding:4px 8px;margin:2px;border:none;border-radius:3px;cursor:pointer;font-size:12px;}";
+  html += ".btn-active{background-color:#28a745;color:white;font-weight:bold;box-shadow:0 0 5px rgba(40,167,69,0.5);}";
+  html += ".btn-inactive{background-color:#dc3545;color:white;}";
+  html += ".btn-red{background-color:#8B0000;color:white;}";
+  html += ".btn-red-active{background-color:#FF0000;color:white;font-weight:bold;border:3px solid #000000;}";
+  html += ".btn-yellow{background-color:#B8860B;color:white;}";
+  html += ".btn-yellow-active{background-color:#FFD700;color:black;font-weight:bold;border:3px solid #000000;}";
+  html += ".btn-green{background-color:#006400;color:white;}";
+  html += ".btn-green-active{background-color:#00FF00;color:black;font-weight:bold;border:3px solid #000000;}";
   html += "</style>";
   html += "</head><body>";
   html += "<div class=\"container\">";
@@ -1016,6 +1043,67 @@ void handleRoot() {
   html += "</div>";
   html += "<button type=\"submit\">Update MQTT</button>";
   html += "</form>";
+  html += "</div>";
+  
+  // Device Status Table (Server-side rendered)
+  html += "<div class=\"section\">";
+  html += "<h2>Device Status</h2>";
+  html += "<table class=\"device-table\">";
+  html += "<tr><th>Type</th><th>Number</th><th>State</th><th>Control</th></tr>";
+  
+  // Add sensors (read-only)
+  for (int i = 0; i < 4; i++) {
+    html += "<tr><td>Sensor</td><td>" + String(i + 1) + "</td>";
+    html += "<td>" + String(sensor_states[i] ? "ACTIVE" : "INACTIVE") + "</td>";
+    html += "<td><em>Read-only</em></td></tr>";
+  }
+  
+  // Add turnouts (with controls)
+  for (int i = 0; i < 2; i++) {
+    html += "<tr><td>Turnout</td><td>" + String(i + 1) + "</td>";
+    html += "<td>" + String(turnout_states[i] ? "THROWN" : "CLOSED") + "</td>";
+    html += "<td>";
+    html += "<form style='display:inline;' method='post' action='/control'>";
+    html += "<input type='hidden' name='type' value='turnout'>";
+    html += "<input type='hidden' name='number' value='" + String(i + 1) + "'>";
+    html += "<input type='hidden' name='action' value='THROWN'>";
+    html += "<button type='submit' class='control-btn " + String(turnout_states[i] ? "btn-active" : "btn-inactive") + "'>THROWN</button>";
+    html += "</form> ";
+    html += "<form style='display:inline;' method='post' action='/control'>";
+    html += "<input type='hidden' name='type' value='turnout'>";
+    html += "<input type='hidden' name='number' value='" + String(i + 1) + "'>";
+    html += "<input type='hidden' name='action' value='CLOSED'>";
+    html += "<button type='submit' class='control-btn " + String(!turnout_states[i] ? "btn-active" : "btn-inactive") + "'>CLOSED</button>";
+    html += "</form>";
+    html += "</td></tr>";
+  }
+  
+  // Add signal (with controls)
+  String signal_aspect = (signal_state == 0) ? "RED" : (signal_state == 1) ? "YELLOW" : "GREEN";
+  html += "<tr><td>Signal</td><td>1</td>";
+  html += "<td>" + signal_aspect + "</td>";
+  html += "<td>";
+  html += "<form style='display:inline;' method='post' action='/control'>";
+  html += "<input type='hidden' name='type' value='signal'>";
+  html += "<input type='hidden' name='number' value='1'>";
+  html += "<input type='hidden' name='action' value='RED'>";
+  html += "<button type='submit' class='control-btn " + String(signal_state == 0 ? "btn-red-active" : "btn-red") + "'>RED</button>";
+  html += "</form> ";
+  html += "<form style='display:inline;' method='post' action='/control'>";
+  html += "<input type='hidden' name='type' value='signal'>";
+  html += "<input type='hidden' name='number' value='1'>";
+  html += "<input type='hidden' name='action' value='YELLOW'>";
+  html += "<button type='submit' class='control-btn " + String(signal_state == 1 ? "btn-yellow-active" : "btn-yellow") + "'>YELLOW</button>";
+  html += "</form> ";
+  html += "<form style='display:inline;' method='post' action='/control'>";
+  html += "<input type='hidden' name='type' value='signal'>";
+  html += "<input type='hidden' name='number' value='1'>";
+  html += "<input type='hidden' name='action' value='GREEN'>";
+  html += "<button type='submit' class='control-btn " + String(signal_state == 2 ? "btn-green-active" : "btn-green") + "'>GREEN</button>";
+  html += "</form>";
+  html += "</td></tr>";
+  
+  html += "</table>";
   html += "</div>";
   
   // Action Buttons
@@ -1068,6 +1156,19 @@ void handleRoot() {
   html += "        document.getElementById('status').innerHTML = '<div class=\"status error\">Error: ' + error + '</div>';";
   html += "    });";
   html += "}";
+  html += "let lastHash = '';";
+  html += "function checkChanges() {";
+  html += "    fetch('/status').then(r => r.json()).then(d => {";
+  html += "        let h = '';";
+  html += "        if(d.sensor_states) d.sensor_states.forEach(s => h += s.state);";
+  html += "        if(d.turnout_states) d.turnout_states.forEach(t => h += t.position);";
+  html += "        if(d.signal_state) h += d.signal_state.aspect;";
+  html += "        if(lastHash && lastHash !== h) location.reload();";
+  html += "        lastHash = h;";
+  html += "    }).catch(() => {});";
+  html += "}";
+  html += "setInterval(checkChanges, 3000);";
+  html += "setTimeout(checkChanges, 1000);";
   html += "</script>";
   html += "</body></html>";
   
@@ -1230,6 +1331,43 @@ void handleStatus() {
   serializeJsonPretty(doc, json_string);  // Use pretty formatting
   
   web_server.send(200, "application/json", json_string);
+}
+
+void handleDeviceControl() {
+  // Check for required parameters
+  if (!web_server.hasArg("type") || !web_server.hasArg("number") || !web_server.hasArg("action")) {
+    web_server.send(400, "text/plain", "Missing required parameters");
+    return;
+  }
+
+  String type = web_server.arg("type");
+  int number = web_server.arg("number").toInt();
+  String action = web_server.arg("action");
+
+  if (type == "turnout") {
+    if (number >= 1 && number <= 2) {
+      bool new_state = (action == "THROWN");
+      if (number == 1) {
+        digitalWrite(TURNOUT_PIN_1, new_state ? HIGH : LOW);
+        turnout_states[0] = new_state;
+      } else {
+        digitalWrite(TURNOUT_PIN_2, new_state ? HIGH : LOW);
+        turnout_states[1] = new_state;
+      }
+      publishTurnoutStatus(number);
+    }
+  } else if (type == "signal" && number == 1) {
+    int new_state = (action == "RED") ? 0 : (action == "YELLOW") ? 1 : 2;
+    signal_state = new_state;
+    digitalWrite(SIGNAL_PIN_RED, (new_state == 0) ? HIGH : LOW);
+    digitalWrite(SIGNAL_PIN_YELLOW, (new_state == 1) ? HIGH : LOW);
+    digitalWrite(SIGNAL_PIN_GREEN, (new_state == 2) ? HIGH : LOW);
+    publishSignalStatus();
+  }
+  
+  // Redirect back to main page
+  web_server.sendHeader("Location", "/");
+  web_server.send(302, "text/plain", "Redirecting...");
 }
 
 void handleRestart() {
@@ -1402,12 +1540,12 @@ void handleUpdateBody() {
       Serial.println("Final size: " + String(Update.size()) + " bytes");
       
       // Verify the update
-      if (Update.hasError()) {
+  if (Update.hasError()) {
         Serial.println("❌ Update verification failed");
         Serial.println("Error: " + String(Update.getError()));
-        return;
-      }
-      
+    return;
+  }
+  
       Serial.println("🔄 Restarting device in 3 seconds...");
       delay(3000);
       ESP.restart();
