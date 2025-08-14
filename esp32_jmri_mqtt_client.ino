@@ -245,7 +245,7 @@ void loadMQTTCredentials() {
     if (!channel_prefix.startsWith("/")) {
       channel_prefix = "/" + channel_prefix;
     }
-    mqtt_base_topic = channel_prefix + "/" + String(topic_prefix) + "/";
+    mqtt_base_topic = channel_prefix + String(topic_prefix) + "/";
     mqtt_sensor_topic = mqtt_base_topic + "sensor/";
     mqtt_turnout_topic = mqtt_base_topic + "turnout/";
     mqtt_signal_topic = mqtt_base_topic + "signal/";
@@ -359,7 +359,7 @@ void setupMQTT() {
   if (!channel_prefix.startsWith("/")) {
     channel_prefix = "/" + channel_prefix;
   }
-  mqtt_base_topic = channel_prefix + "/" + String(MQTT_TOPIC_PREFIX) + "/";
+  mqtt_base_topic = channel_prefix + String(MQTT_TOPIC_PREFIX) + "/";
   mqtt_sensor_topic = mqtt_base_topic + "sensor/";
   mqtt_turnout_topic = mqtt_base_topic + "turnout/";
   mqtt_signal_topic = mqtt_base_topic + "signal/";
@@ -384,6 +384,7 @@ void setupWebServer() {
   web_server.on("/status", HTTP_GET, handleStatus);
   web_server.on("/control", HTTP_POST, handleDeviceControl); // Device control endpoint
   web_server.on("/restart", HTTP_POST, handleRestart);
+  web_server.on("/reset", HTTP_POST, handleReset);
   
   // Test endpoint for debugging
   web_server.on("/test", HTTP_GET, []() {
@@ -1126,7 +1127,8 @@ void handleRoot() {
   html += "<div class=\"section\">";
   html += "<h2>Device Control Panel</h2>";
   html += "<table class=\"device-table\">";
-  html += "<tr><th>Type</th><th>Number</th><th>State</th><th>Control</th></tr>";
+  html += "<thead><tr><th>Type</th><th>Number</th><th>State</th><th>Control</th></tr></thead>";
+  html += "<tbody id=\"device-table-body\">";
   
   // Add sensors (read-only)
   for (int i = 0; i < 4; i++) {
@@ -1140,18 +1142,8 @@ void handleRoot() {
     html += "<tr><td>Turnout</td><td>" + String(i + 1) + "</td>";
     html += "<td>" + String(turnout_states[i] ? "THROWN" : "CLOSED") + "</td>";
     html += "<td>";
-    html += "<form style='display:inline;' method='post' action='/control'>";
-    html += "<input type='hidden' name='type' value='turnout'>";
-    html += "<input type='hidden' name='number' value='" + String(i + 1) + "'>";
-    html += "<input type='hidden' name='action' value='THROWN'>";
-    html += "<button type='submit' class='control-btn " + String(turnout_states[i] ? "btn-active" : "btn-inactive") + "'>THROWN</button>";
-    html += "</form> ";
-    html += "<form style='display:inline;' method='post' action='/control'>";
-    html += "<input type='hidden' name='type' value='turnout'>";
-    html += "<input type='hidden' name='number' value='" + String(i + 1) + "'>";
-    html += "<input type='hidden' name='action' value='CLOSED'>";
-    html += "<button type='submit' class='control-btn " + String(!turnout_states[i] ? "btn-active" : "btn-inactive") + "'>CLOSED</button>";
-    html += "</form>";
+    html += "<button onclick=\"controlDevice(event,'turnout'," + String(i + 1) + ",'THROWN')\" class='control-btn " + String(turnout_states[i] ? "btn-active" : "btn-inactive") + "'>THROWN</button> ";
+    html += "<button onclick=\"controlDevice(event,'turnout'," + String(i + 1) + ",'CLOSED')\" class='control-btn " + String(!turnout_states[i] ? "btn-active" : "btn-inactive") + "'>CLOSED</button>";
     html += "</td></tr>";
   }
   
@@ -1160,26 +1152,12 @@ void handleRoot() {
   html += "<tr><td>Signal</td><td>1</td>";
   html += "<td>" + signal_aspect + "</td>";
   html += "<td>";
-  html += "<form style='display:inline;' method='post' action='/control'>";
-  html += "<input type='hidden' name='type' value='signal'>";
-  html += "<input type='hidden' name='number' value='1'>";
-  html += "<input type='hidden' name='action' value='RED'>";
-  html += "<button type='submit' class='control-btn " + String(signal_state == 0 ? "btn-red-active" : "btn-red") + "'>RED</button>";
-  html += "</form> ";
-  html += "<form style='display:inline;' method='post' action='/control'>";
-  html += "<input type='hidden' name='type' value='signal'>";
-  html += "<input type='hidden' name='number' value='1'>";
-  html += "<input type='hidden' name='action' value='YELLOW'>";
-  html += "<button type='submit' class='control-btn " + String(signal_state == 1 ? "btn-yellow-active" : "btn-yellow") + "'>YELLOW</button>";
-  html += "</form> ";
-  html += "<form style='display:inline;' method='post' action='/control'>";
-  html += "<input type='hidden' name='type' value='signal'>";
-  html += "<input type='hidden' name='number' value='1'>";
-  html += "<input type='hidden' name='action' value='GREEN'>";
-  html += "<button type='submit' class='control-btn " + String(signal_state == 2 ? "btn-green-active" : "btn-green") + "'>GREEN</button>";
-  html += "</form>";
+  html += "<button onclick=\"controlDevice(event,'signal',1,'RED')\" class='control-btn " + String(signal_state == 0 ? "btn-red-active" : "btn-red") + "'>RED</button> ";
+  html += "<button onclick=\"controlDevice(event,'signal',1,'YELLOW')\" class='control-btn " + String(signal_state == 1 ? "btn-yellow-active" : "btn-yellow") + "'>YELLOW</button> ";
+  html += "<button onclick=\"controlDevice(event,'signal',1,'GREEN')\" class='control-btn " + String(signal_state == 2 ? "btn-green-active" : "btn-green") + "'>GREEN</button>";
   html += "</td></tr>";
   
+  html += "</tbody>";
   html += "</table>";
   html += "</div>";
   
@@ -1274,7 +1252,9 @@ void handleRoot() {
   html += "<h3>Device Control</h3>";
   html += "<div class=\"button-group\">";
   html += "<button onclick=\"restartDevice()\" style=\"background:var(--warning);\">Restart Device</button>";
+  html += "<button onclick=\"resetSavedVariables()\" style=\"background:var(--danger);margin-left:10px;\">Reset Saved Variables</button>";
   html += "</div>";
+  html += "<p style=\"color:var(--text-secondary);font-size:0.9em;margin-top:10px;\">Reset will clear all saved WiFi, MQTT, and configuration settings. Device will restart with defaults.</p>";
   html += "</div>";
   
   html += "</div>"; // End Firmware Tab
@@ -1307,8 +1287,10 @@ void handleRoot() {
   html += "document.querySelector('.theme-toggle').textContent = savedTheme === 'dark' ? 'Light Mode' : 'Dark Mode';";
   html += "const savedTab = localStorage.getItem('activeTab');";
   html += "if (savedTab) {";
-  html += "    localStorage.removeItem('activeTab');";
-  html += "    setTimeout(() => showTab(savedTab), 100);";
+  html += "    setTimeout(() => {";
+  html += "        showTab(savedTab);";
+  html += "        localStorage.removeItem('activeTab');";
+  html += "    }, 200);";
   html += "}";
   
   // Form handlers
@@ -1366,9 +1348,49 @@ void handleRoot() {
   html += "        if(d.sensor_states) d.sensor_states.forEach(s => h += s.state);";
   html += "        if(d.turnout_states) d.turnout_states.forEach(t => h += t.position);";
   html += "        if(d.signal_state) h += d.signal_state.aspect;";
-  html += "        if(lastHash && lastHash !== h) location.reload();";
+  html += "        if(lastHash && lastHash !== h) updateDeviceTable(d);";
   html += "        lastHash = h;";
   html += "    }).catch(() => {});";
+  html += "}";
+  html += "";
+  html += "function updateDeviceTable(data) {";
+  html += "    console.log('Updating device table with new data');";
+  html += "    const table = document.getElementById('device-table-body');";
+  html += "    if (!table) {";
+  html += "        console.log('Device table not found, doing full reload');";
+  html += "        location.reload();";
+  html += "        return;";
+  html += "    }";
+  html += "    let tableHtml = '';";
+  html += "    if(data.sensor_states) {";
+  html += "        data.sensor_states.forEach((sensor, i) => {";
+  html += "            tableHtml += '<tr><td>Sensor</td><td>' + (i+1) + '</td>';";
+  html += "            tableHtml += '<td>' + sensor.state + '</td>';";
+  html += "            tableHtml += '<td><em>Read-only</em></td></tr>';";
+  html += "        });";
+  html += "    }";
+  html += "    if(data.turnout_states) {";
+  html += "        data.turnout_states.forEach((turnout, i) => {";
+  html += "            const state = turnout.position;";
+  html += "            const isThrown = (state === 'THROWN');";
+  html += "            tableHtml += '<tr><td>Turnout</td><td>' + (i+1) + '</td>';";
+  html += "            tableHtml += '<td>' + state + '</td><td>';";
+              html += "            tableHtml += '<button onclick=\"controlDevice(event,\\'turnout\\',' + (i+1) + ',\\'THROWN\\')\" class=\"control-btn ' + (isThrown ? 'btn-active' : 'btn-inactive') + '\">THROWN</button> ';";
+            html += "            tableHtml += '<button onclick=\"controlDevice(event,\\'turnout\\',' + (i+1) + ',\\'CLOSED\\')\" class=\"control-btn ' + (!isThrown ? 'btn-active' : 'btn-inactive') + '\">CLOSED</button>';";
+  html += "            tableHtml += '</td></tr>';";
+  html += "        });";
+  html += "    }";
+  html += "    if(data.signal_state) {";
+  html += "        const sigState = data.signal_state.aspect;";
+  html += "        const stateNum = (sigState === 'RED') ? 0 : (sigState === 'YELLOW') ? 1 : 2;";
+  html += "        tableHtml += '<tr><td>Signal</td><td>1</td>';";
+  html += "        tableHtml += '<td>' + sigState + '</td><td>';";
+          html += "        tableHtml += '<button onclick=\"controlDevice(event,\\'signal\\',1,\\'RED\\')\" class=\"control-btn ' + (stateNum === 0 ? 'btn-red-active' : 'btn-red') + '\">RED</button> ';";
+        html += "        tableHtml += '<button onclick=\"controlDevice(event,\\'signal\\',1,\\'YELLOW\\')\" class=\"control-btn ' + (stateNum === 1 ? 'btn-yellow-active' : 'btn-yellow') + '\">YELLOW</button> ';";
+        html += "        tableHtml += '<button onclick=\"controlDevice(event,\\'signal\\',1,\\'GREEN\\')\" class=\"control-btn ' + (stateNum === 2 ? 'btn-green-active' : 'btn-green') + '\">GREEN</button>';";
+  html += "        tableHtml += '</td></tr>';";
+  html += "    }";
+  html += "    table.innerHTML = tableHtml;";
   html += "}";
   html += "setInterval(checkChanges, 3000);";
   html += "setTimeout(checkChanges, 1000);";
@@ -1469,6 +1491,37 @@ void handleRoot() {
   html += "        })";
   html += "        .catch(error => alert('Restart request failed: ' + error));";
   html += "    }";
+  html += "}";
+  html += "";
+  html += "function resetSavedVariables() {";
+  html += "    if (confirm('WARNING: This will delete ALL saved settings (WiFi, MQTT, etc.) and restart with defaults. Are you sure?')) {";
+  html += "        if (confirm('This action cannot be undone. The device will lose all configuration. Continue?')) {";
+  html += "            fetch('/reset', { method: 'POST' })";
+  html += "            .then(() => {";
+  html += "                alert('All saved variables cleared! Device is restarting with default settings. You may need to reconfigure WiFi.');";
+  html += "                setTimeout(() => location.reload(), 15000);";
+  html += "            })";
+  html += "            .catch(error => alert('Reset request failed: ' + error));";
+  html += "        }";
+  html += "    }";
+  html += "}";
+  html += "";
+  html += "function controlDevice(event, type, number, action) {";
+  html += "    event.preventDefault();";
+  html += "    const formData = new FormData();";
+  html += "    formData.append('type', type);";
+  html += "    formData.append('number', number);";
+  html += "    formData.append('action', action);";
+  html += "    fetch('/control', { method: 'POST', body: formData })";
+  html += "    .then(response => {";
+  html += "        if (response.ok) {";
+  html += "            console.log(type + ' ' + number + ' set to ' + action);";
+  html += "            checkChanges();";
+  html += "        } else {";
+  html += "            console.error('Control request failed');";
+  html += "        }";
+  html += "    })";
+  html += "    .catch(error => console.error('Control request error:', error));";
   html += "}";
   
   html += "function startVersionPolling() {";
@@ -1588,7 +1641,7 @@ void handleMQTTConfig() {
     if (!channel_prefix.startsWith("/")) {
       channel_prefix = "/" + channel_prefix;
     }
-    mqtt_base_topic = channel_prefix + "/" + String(new_topic_prefix) + "/";
+    mqtt_base_topic = channel_prefix + String(new_topic_prefix) + "/";
     mqtt_sensor_topic = mqtt_base_topic + "sensor/";
     mqtt_turnout_topic = mqtt_base_topic + "turnout/";
     mqtt_signal_topic = mqtt_base_topic + "signal/";
@@ -1727,6 +1780,21 @@ void handleDeviceControl() {
 void handleRestart() {
   web_server.send(200, "text/plain", "Device restarting...");
   delay(1000);
+  ESP.restart();
+}
+
+void handleReset() {
+  Serial.println("=== FACTORY RESET REQUESTED ===");
+  web_server.send(200, "text/plain", "Clearing all saved variables and restarting...");
+  
+  // Clear all stored preferences
+  preferences.clear();
+  Serial.println("All preferences cleared");
+  
+  // Give a moment for the response to be sent
+  delay(2000);
+  
+  Serial.println("Restarting with factory defaults...");
   ESP.restart();
 }
 
