@@ -1047,13 +1047,21 @@ void handleRoot() {
   html += ".control-btn{padding:6px 12px;margin:2px;border:none;border-radius:4px;";
   html += "cursor:pointer;font-size:0.9em;transition:all 0.3s;}";
   html += ".btn-active{background:#28a745;color:white;font-weight:bold;box-shadow:0 2px 4px rgba(40,167,69,0.3);}";
-  html += ".btn-inactive{background:#dc3545;color:white;}";
+  html += ".btn-inactive{background:#dc3545;color:white;opacity:0.5;}";
   html += ".btn-red{background:#dc3545;color:white;opacity:0.5;}";
   html += ".btn-red-active{background:#dc3545;color:white;opacity:1.0;font-weight:bold;}";
   html += ".btn-yellow{background:#ffc107;color:white;opacity:0.5;}";
   html += ".btn-yellow-active{background:#ffc107;color:white;opacity:1.0;font-weight:bold;}";
   html += ".btn-green{background:#28a745;color:white;opacity:0.5;}";
   html += ".btn-green-active{background:#28a745;color:white;opacity:1.0;font-weight:bold;}";
+  html += ".btn-inactive:hover{opacity:1.0!important;background:#dc3545!important;}";
+  html += ".btn-red:hover{opacity:1.0!important;background:#dc3545!important;}";
+  html += ".btn-yellow:hover{opacity:1.0!important;background:#ffc107!important;}";
+  html += ".btn-green:hover{opacity:1.0!important;background:#28a745!important;}";
+  html += ".btn-active:hover{background:#28a745!important;}";
+  html += ".btn-red-active:hover{background:#dc3545!important;}";
+  html += ".btn-yellow-active:hover{background:#ffc107!important;}";
+  html += ".btn-green-active:hover{background:#28a745!important;}";
   
   // Status display
   html += ".status-display{background:var(--bg-secondary);border-radius:8px;padding:20px;";
