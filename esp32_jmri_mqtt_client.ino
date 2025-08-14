@@ -16,6 +16,7 @@
 
 #include "config.h"
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <WebServer.h>
@@ -23,12 +24,26 @@
 #include <SPIFFS.h>
 #include <Preferences.h>
 #include <ArduinoOTA.h>
+#include <ESPmDNS.h>
 
 // WiFi configuration
-const char* default_ssid = DEFAULT_SSID;
+String default_ssid = "";  // Will be set in setup using MAC address
 const char* default_password = DEFAULT_PASSWORD;
 String wifi_ssid = "";
 String wifi_password = "";
+
+// Function to get unique SSID suffix from MAC address
+String getUniqueId() {
+  uint8_t mac[6];
+  WiFi.softAPmacAddress(mac);  // Get AP MAC address specifically
+  
+  // Use last 4 digits of MAC
+  char suffix[5];
+  snprintf(suffix, sizeof(suffix), "%02X%02X", mac[4], mac[5]);
+  Serial.printf("Using last 4 digits of AP MAC: %s\n", suffix);
+  
+  return String(suffix);
+}
 
 // MQTT topics - Updated to match JMRI format
 String mqtt_base_topic = String(MQTT_TOPIC_PREFIX) + "/";
@@ -46,8 +61,31 @@ Preferences preferences;
 
 // MQTT broker info storage
 String mqtt_broker_ip = "";
+String mqtt_broker_hostname = "";  // For mDNS hostname like "rpi-jmri.local"
 int mqtt_broker_port = 0;
 String mqtt_channel_name = "";
+
+// Function to resolve mDNS hostname to IP
+bool resolveMDNSHost(const char* hostname) {
+  Serial.printf("Resolving mDNS hostname: %s\n", hostname);
+  
+  // Remove .local suffix if present
+  String host = String(hostname);
+  if (host.endsWith(".local")) {
+    host = host.substring(0, host.length() - 6);
+  }
+  
+  // Try to resolve hostname
+  IPAddress ip = MDNS.queryHost(host.c_str(), 5000);
+  if (ip.toString() != "0.0.0.0") {
+    mqtt_broker_ip = ip.toString();
+    Serial.printf("Resolved %s to IP: %s\n", hostname, mqtt_broker_ip.c_str());
+    return true;
+  }
+  
+  Serial.printf("Failed to resolve %s\n", hostname);
+  return false;
+}
 
 // State variables
 bool wifi_configured = false;
@@ -82,6 +120,45 @@ void setup() {
   Serial.begin(SERIAL_BAUD_RATE);
   Serial.println("\n\n=== ESP32 JMRI MQTT Client ===");
   Serial.println("Firmware Version: " + String(FIRMWARE_VERSION));
+  
+  // Initialize WiFi early
+  WiFi.mode(WIFI_MODE_APSTA);
+  delay(100);  // Give WiFi time to initialize
+  
+  // Debug WiFi status
+  Serial.println("=== WiFi Debug Info ===");
+  Serial.print("WiFi Mode: ");
+  switch(WiFi.getMode()) {
+    case WIFI_MODE_NULL: Serial.println("NULL"); break;
+    case WIFI_MODE_STA: Serial.println("STA"); break;
+    case WIFI_MODE_AP: Serial.println("AP"); break;
+    case WIFI_MODE_APSTA: Serial.println("AP+STA"); break;
+    default: Serial.println("UNKNOWN"); break;
+  }
+  
+  // Get and display raw MAC address
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  Serial.print("STA MAC Address: ");
+  for (int i = 0; i < 6; i++) {
+    Serial.printf("%02X", mac[i]);
+    if (i < 5) Serial.print(":");
+  }
+  Serial.println();
+  
+  WiFi.softAPmacAddress(mac);
+  Serial.print("AP MAC Address:  ");
+  for (int i = 0; i < 6; i++) {
+    Serial.printf("%02X", mac[i]);
+    if (i < 5) Serial.print(":");
+  }
+  Serial.println();
+  
+  // Get unique ID and set SSID
+  String uniqueId = getUniqueId();
+  default_ssid = String(DEFAULT_SSID) + "_" + uniqueId;
+  Serial.println("Device Unique ID: " + uniqueId);
+  Serial.println("AP SSID will be: " + default_ssid);
   
   // Display system information
   displaySystemInfo();
@@ -219,57 +296,43 @@ void loadWiFiCredentials() {
 void loadMQTTCredentials() {
   Serial.println("=== Loading MQTT Credentials ===");
   
-  // Load MQTT settings from preferences if they exist
-  String broker = preferences.getString("mqtt_broker", "");
-  int port = preferences.getInt("mqtt_port", 0);
-  String client_id = preferences.getString("mqtt_client_id", "");
-  String channel_name = preferences.getString("mqtt_channel_name", "");
-  String topic_prefix = preferences.getString("mqtt_topic_prefix", "");
+  // Load MQTT settings from preferences with defaults from config.h
+  String broker = preferences.getString("mqtt_broker", MQTT_BROKER);
+  int port = preferences.getInt("mqtt_port", MQTT_PORT);
+  String client_id = preferences.getString("mqtt_client_id", MQTT_CLIENT_ID);
+  String channel_name = preferences.getString("mqtt_channel_name", MQTT_CHANNEL_NAME);
+  String topic_prefix = preferences.getString("mqtt_topic_prefix", MQTT_TOPIC_PREFIX);
   
-  Serial.println("From preferences:");
-  Serial.println("  Broker: " + (broker.length() > 0 ? broker : "NOT SET"));
-  Serial.println("  Port: " + (port > 0 ? String(port) : "NOT SET"));
-  Serial.println("  Client ID: " + (client_id.length() > 0 ? client_id : "NOT SET"));
-  Serial.println("  Channel Name: " + (channel_name.length() > 0 ? channel_name : "NOT SET"));
-  Serial.println("  Topic Prefix: " + (topic_prefix.length() > 0 ? topic_prefix : "NOT SET"));
+  Serial.println("Loaded configuration:");
+  Serial.println("  Broker: " + broker + (broker == MQTT_BROKER ? " (default)" : " (saved)"));
+  Serial.println("  Port: " + String(port) + (port == MQTT_PORT ? " (default)" : " (saved)"));
+  Serial.println("  Client ID: " + client_id + (client_id == MQTT_CLIENT_ID ? " (default)" : " (saved)"));
+  Serial.println("  Channel Name: " + channel_name + (channel_name == MQTT_CHANNEL_NAME ? " (default)" : " (saved)"));
+  Serial.println("  Topic Prefix: " + topic_prefix + (topic_prefix == MQTT_TOPIC_PREFIX ? " (default)" : " (saved)"));
   
-  if (broker.length() > 0 && port > 0 && client_id.length() > 0 && topic_prefix.length() > 0) {
-    Serial.println("✅ Loaded saved MQTT credentials for broker: " + broker + ":" + String(port));
-    // Update MQTT client settings
-    mqtt_broker_ip = broker;
-    mqtt_broker_port = port;
-    mqtt_channel_name = channel_name.length() > 0 ? channel_name : String(MQTT_CHANNEL_NAME);
-    
-    // Update topic strings with channel name prefix
-    String channel_prefix = mqtt_channel_name;
-    if (!channel_prefix.startsWith("/")) {
-      channel_prefix = "/" + channel_prefix;
-    }
-    mqtt_base_topic = channel_prefix + String(topic_prefix) + "/";
-    mqtt_sensor_topic = mqtt_base_topic + "sensor/";
-    mqtt_turnout_topic = mqtt_base_topic + "turnout/";
-    mqtt_signal_topic = mqtt_base_topic + "signal/";
-    mqtt_light_topic = mqtt_base_topic + "light/";
-    mqtt_status_topic = mqtt_base_topic + "status/";
-    
-    Serial.println("Updated topic strings:");
-    Serial.println("  Base: " + mqtt_base_topic);
-    Serial.println("  Sensors: " + mqtt_sensor_topic);
-    Serial.println("  Turnouts: " + mqtt_turnout_topic);
-    Serial.println("  Signals: " + mqtt_signal_topic);
-    Serial.println("  Status: " + mqtt_status_topic);
-  } else {
-    Serial.println("⚠️ No saved MQTT credentials found, will use defaults from config.h");
-    Serial.println("Default values from config.h:");
-    Serial.println("  Broker: " + String(MQTT_BROKER));
-    Serial.println("  Port: " + String(MQTT_PORT));
-    Serial.println("  Client ID: " + String(MQTT_CLIENT_ID));
-    Serial.println("  Channel Name: " + String(MQTT_CHANNEL_NAME));
-    Serial.println("  Topic Prefix: " + String(MQTT_TOPIC_PREFIX));
-    
-    // Set default channel name
-    mqtt_channel_name = String(MQTT_CHANNEL_NAME);
+  // Update MQTT client settings
+  mqtt_broker_ip = broker;
+  mqtt_broker_port = port;
+  mqtt_channel_name = channel_name;
+  
+  // Update topic strings with channel name prefix
+  String channel_prefix = mqtt_channel_name;
+  if (!channel_prefix.startsWith("/")) {
+    channel_prefix = "/" + channel_prefix;
   }
+  mqtt_base_topic = channel_prefix + String(topic_prefix) + "/";
+  mqtt_sensor_topic = mqtt_base_topic + "sensor/";
+  mqtt_turnout_topic = mqtt_base_topic + "turnout/";
+  mqtt_signal_topic = mqtt_base_topic + "signal/";
+  mqtt_light_topic = mqtt_base_topic + "light/";
+  mqtt_status_topic = mqtt_base_topic + "status/";
+  
+  Serial.println("Updated topic strings:");
+  Serial.println("  Base: " + mqtt_base_topic);
+  Serial.println("  Sensors: " + mqtt_sensor_topic);
+  Serial.println("  Turnouts: " + mqtt_turnout_topic);
+  Serial.println("  Signals: " + mqtt_signal_topic);
+  Serial.println("  Status: " + mqtt_status_topic);
   
   Serial.println("===============================");
 }
@@ -312,7 +375,7 @@ void setupWiFi() {
     // Start configuration mode
     Serial.println("=== Starting WiFi Configuration Mode ===");
     WiFi.mode(WIFI_AP);
-    WiFi.softAP(default_ssid, default_password);
+    WiFi.softAP(default_ssid.c_str(), default_password);
     Serial.println("AP SSID: " + String(default_ssid));
     Serial.println("AP Password: " + String(default_password));
     Serial.println("AP IP address: " + WiFi.softAPIP().toString());
@@ -325,28 +388,27 @@ void setupWiFi() {
 void setupMQTT() {
   Serial.println("=== Setting up MQTT ===");
   
-  // Check if we have loaded credentials from preferences
-  if (mqtt_broker_ip.length() > 0 && mqtt_broker_port > 0) {
-    Serial.println("Using loaded credentials from preferences:");
-    Serial.println("  Broker: " + mqtt_broker_ip);
-    Serial.println("  Port: " + String(mqtt_broker_port));
-    Serial.println("  Client ID: " + String(MQTT_CLIENT_ID));
-    Serial.println("  Topic Prefix: " + String(MQTT_TOPIC_PREFIX));
-  } else {
-    Serial.println("No credentials loaded, using defaults from config.h:");
-    Serial.println("  Broker: " + String(MQTT_BROKER));
-    Serial.println("  Port: " + String(MQTT_PORT));
-    Serial.println("  Client ID: " + String(MQTT_CLIENT_ID));
-    Serial.println("  Channel Name: " + String(MQTT_CHANNEL_NAME));
-    Serial.println("  Topic Prefix: " + String(MQTT_TOPIC_PREFIX));
-    
-    // Set default values if none were loaded
-    mqtt_broker_ip = String(MQTT_BROKER);
-    mqtt_broker_port = MQTT_PORT;
-    if (mqtt_channel_name.length() == 0) {
-      mqtt_channel_name = String(MQTT_CHANNEL_NAME);
+  // Initialize mDNS if not already done
+  if (!MDNS.begin("esp32-jmri-client")) {
+    Serial.println("Error setting up mDNS responder");
+  }
+  
+  // If we have a hostname, try to resolve it
+  if (mqtt_broker_hostname.length() > 0) {
+    if (resolveMDNSHost(mqtt_broker_hostname.c_str())) {
+      Serial.println("Successfully resolved hostname to IP");
+    } else {
+      Serial.println("Warning: Could not resolve hostname, will try direct IP");
     }
   }
+  
+  Serial.println("Using configuration:");
+  Serial.println("  Broker: " + (mqtt_broker_hostname.length() > 0 ? mqtt_broker_hostname : mqtt_broker_ip));
+  Serial.println("  IP: " + mqtt_broker_ip);
+  Serial.println("  Port: " + String(mqtt_broker_port));
+  Serial.println("  Client ID: " + String(MQTT_CLIENT_ID));
+  Serial.println("  Channel Name: " + mqtt_channel_name);
+  Serial.println("  Topic Prefix: " + String(MQTT_TOPIC_PREFIX));
   
   // Update MQTT client settings
   mqtt_client.setServer(mqtt_broker_ip.c_str(), mqtt_broker_port);
@@ -385,6 +447,8 @@ void setupWebServer() {
   web_server.on("/control", HTTP_POST, handleDeviceControl); // Device control endpoint
   web_server.on("/restart", HTTP_POST, handleRestart);
   web_server.on("/reset", HTTP_POST, handleReset);
+  web_server.on("/backup", HTTP_GET, handleBackup);
+  web_server.on("/restore", HTTP_POST, []() {}, handleRestore);
   
   // Test endpoint for debugging
   web_server.on("/test", HTTP_GET, []() {
@@ -1247,14 +1311,21 @@ void handleRoot() {
   html += "<div id=\"uploadStatus\"></div>";
   html += "</div>";
   
-  // Device Control Section
+  // Device Management Section
   html += "<div class=\"section\">";
-  html += "<h3>Device Control</h3>";
-  html += "<div class=\"button-group\">";
-  html += "<button onclick=\"restartDevice()\" style=\"background:var(--warning);\">Restart Device</button>";
-  html += "<button onclick=\"resetSavedVariables()\" style=\"background:var(--danger);margin-left:10px;\">Reset Saved Variables</button>";
+  html += "<h3>Device Management</h3>";
+  html += "<div class=\"button-group\" style=\"display:flex;gap:10px;margin-bottom:20px;\">";
+  html += "<button onclick=\"restartDevice()\" style=\"background:var(--accent-primary);\">Restart Device</button>";
+  html += "<span style=\"width:20px;\"></span>";  // Spacer
+  html += "<a href=\"/backup\" class=\"button\" style=\"background:var(--accent-primary);text-decoration:none;color:white;padding:10px 20px;border-radius:6px;\">Download Backup</a>";
+  html += "<button onclick=\"restoreConfig()\" id=\"restoreBtn\" disabled style=\"background:var(--accent-primary);\">Restore Configuration</button>";
+  html += "<span style=\"width:20px;\"></span>";  // Spacer
+  html += "<button onclick=\"resetSavedVariables()\" style=\"background:var(--danger);\">Reset Saved Variables</button>";
   html += "</div>";
-  html += "<p style=\"color:var(--text-secondary);font-size:0.9em;margin-top:10px;\">Reset will clear all saved WiFi, MQTT, and configuration settings. Device will restart with defaults.</p>";
+  html += "<div class=\"upload-form\">";
+  html += "<input type=\"file\" id=\"configFile\" accept=\".json\" onchange=\"validateConfigFile(this)\" style=\"width:100%;padding:10px;margin:10px 0;border:2px dashed var(--border-color);border-radius:4px;background:var(--bg-secondary);color:var(--text-primary);\">";
+  html += "</div>";
+  html += "<p style=\"color:var(--text-secondary);font-size:0.9em;margin-top:10px;\">Backup includes all WiFi, MQTT, and device settings. Reset will clear all saved settings. Device will restart after restore or reset.</p>";
   html += "</div>";
   
   html += "</div>"; // End Firmware Tab
@@ -1505,6 +1576,36 @@ void handleRoot() {
   html += "        }";
   html += "    }";
   html += "}";
+  
+  html += "function validateConfigFile(input) {";
+  html += "    const file = input.files[0];";
+  html += "    const restoreBtn = document.getElementById('restoreBtn');";
+  html += "    if (file && file.name.endsWith('.json')) {";
+  html += "        restoreBtn.disabled = false;";
+  html += "    } else {";
+  html += "        restoreBtn.disabled = true;";
+  html += "        alert('Please select a valid backup file (.json)');";
+  html += "    }";
+  html += "}";
+  
+  html += "function restoreConfig() {";
+  html += "    const fileInput = document.getElementById('configFile');";
+  html += "    const file = fileInput.files[0];";
+  html += "    if (!file) return;";
+  html += "    if (!confirm('This will overwrite all current settings and restart the device. Continue?')) return;";
+  html += "    const formData = new FormData();";
+  html += "    formData.append('config', file);";
+  html += "    fetch('/restore', { method: 'POST', body: formData })";
+  html += "    .then(response => {";
+  html += "        if (response.ok) {";
+  html += "            alert('Configuration restored! Device is restarting...');";
+  html += "            setTimeout(() => location.reload(), 15000);";
+  html += "        } else {";
+  html += "            throw new Error('Restore failed');";
+  html += "        }";
+  html += "    })";
+  html += "    .catch(error => alert('Restore failed: ' + error));";
+  html += "}";
   html += "";
   html += "function controlDevice(event, type, number, action) {";
   html += "    event.preventDefault();";
@@ -1628,13 +1729,14 @@ void handleMQTTConfig() {
     preferences.putString("mqtt_channel_name", new_channel_name);
     preferences.putString("mqtt_topic_prefix", new_topic_prefix);
 
-    // Update MQTT client settings
-    mqtt_client.setServer(new_broker.c_str(), new_port);
-    
-    // Update our stored broker info
+    // Update global variables
     mqtt_broker_ip = new_broker;
     mqtt_broker_port = new_port;
     mqtt_channel_name = new_channel_name;
+
+    // Update MQTT client settings
+    mqtt_client.disconnect();
+    mqtt_client.setServer(new_broker.c_str(), new_port);
     
     // Update topic strings with channel name prefix
     String channel_prefix = mqtt_channel_name;
@@ -1930,5 +2032,86 @@ void handleUpdateBody() {
       Serial.println("Error: " + String(Update.getError()));
       Update.printError(Serial);
     }
+  }
+}
+
+void handleBackup() {
+  // Create a JSON document to store all preferences
+  DynamicJsonDocument doc(1024);
+  
+  // Add WiFi settings
+  doc["wifi_ssid"] = preferences.getString("wifi_ssid", "");
+  doc["wifi_password"] = preferences.getString("wifi_password", "");
+  
+  // Add MQTT settings
+  doc["mqtt_broker"] = preferences.getString("mqtt_broker", "");
+  doc["mqtt_port"] = preferences.getInt("mqtt_port", 0);
+  doc["mqtt_client_id"] = preferences.getString("mqtt_client_id", "");
+  doc["mqtt_channel_name"] = preferences.getString("mqtt_channel_name", "");
+  doc["mqtt_topic_prefix"] = preferences.getString("mqtt_topic_prefix", "");
+  
+  // Add device configuration
+  doc["device_name"] = DEVICE_NAME;
+  doc["firmware_version"] = FIRMWARE_VERSION;
+  
+  // Add timestamp
+  doc["backup_timestamp"] = String(millis());
+  
+  // Serialize to JSON string
+  String jsonStr;
+  serializeJsonPretty(doc, jsonStr);
+  
+  // Generate filename with client ID and timestamp
+  String filename = String(MQTT_CLIENT_ID) + "_backup_" + String(millis()) + ".json";
+  
+  // Send as file download
+  web_server.sendHeader("Content-Disposition", "attachment; filename=" + filename);
+  web_server.send(200, "application/json", jsonStr);
+}
+
+void handleRestore() {
+  HTTPUpload& upload = web_server.upload();
+  
+  if (upload.status == UPLOAD_FILE_START) {
+    Serial.println("=== Starting config restore ===");
+  } else if (upload.status == UPLOAD_FILE_WRITE) {
+    // Parse JSON from uploaded file
+    DynamicJsonDocument doc(1024);
+    DeserializationError error = deserializeJson(doc, (char*)upload.buf);
+    
+    if (error) {
+      Serial.println("Failed to parse config file");
+      return;
+    }
+    
+    // Restore WiFi settings
+    if (doc.containsKey("wifi_ssid")) {
+      preferences.putString("wifi_ssid", doc["wifi_ssid"].as<String>());
+    }
+    if (doc.containsKey("wifi_password")) {
+      preferences.putString("wifi_password", doc["wifi_password"].as<String>());
+    }
+    
+    // Restore MQTT settings
+    if (doc.containsKey("mqtt_broker")) {
+      preferences.putString("mqtt_broker", doc["mqtt_broker"].as<String>());
+    }
+    if (doc.containsKey("mqtt_port")) {
+      preferences.putInt("mqtt_port", doc["mqtt_port"].as<int>());
+    }
+    if (doc.containsKey("mqtt_client_id")) {
+      preferences.putString("mqtt_client_id", doc["mqtt_client_id"].as<String>());
+    }
+    if (doc.containsKey("mqtt_channel_name")) {
+      preferences.putString("mqtt_channel_name", doc["mqtt_channel_name"].as<String>());
+    }
+    if (doc.containsKey("mqtt_topic_prefix")) {
+      preferences.putString("mqtt_topic_prefix", doc["mqtt_topic_prefix"].as<String>());
+    }
+  } else if (upload.status == UPLOAD_FILE_END) {
+    Serial.println("Config restore complete");
+    web_server.send(200, "text/plain", "Configuration restored. Device will restart...");
+    delay(1000);
+    ESP.restart();
   }
 }

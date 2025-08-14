@@ -1,200 +1,132 @@
 # ESP32 JMRI MQTT Client
 
-This project provides an ESP32-based MQTT client for interfacing with JMRI (Java Model Railroad Interface) for model railroad control.
+An ESP32-based MQTT client for interfacing with JMRI (Java Model Railroad Interface) for model railroad control. This project provides a robust, configurable interface between physical hardware (sensors, turnouts, signals) and JMRI via MQTT.
 
 ## Features
 
-- **Sensor Feedback Detection**: Monitor up to 4 occupancy sensors
-- **Turnout Control**: Control up to 2 turnouts via MQTT commands
-- **Signal Control**: Control 3-color traffic signals (red, yellow, green)
-- **OTA Updates**: Over-the-air firmware updates via web interface
-- **WiFi Configuration**: Web-based WiFi setup interface
-- **MQTT Communication**: Bidirectional communication with JMRI
-- **Status Monitoring**: Real-time status reporting and monitoring
+### Hardware Interface
+- **Sensors**: 4 digital input pins with pull-up resistors
+- **Turnouts**: 2 digital output pins for turnout control
+- **Signals**: 3-aspect signal support (Red, Yellow, Green)
+- **Status LED**: Activity indication
 
-## Configuration
+### MQTT Integration
+- **Topic Structure**: `/trains/track/[type]/[number]`
+  - Sensors: `.../sensor/1` through `.../sensor/4`
+  - Turnouts: `.../turnout/1` and `.../turnout/2`
+  - Signal: `.../signal/1`
+- **Retained Messages**: All state changes are published as retained messages
+- **Boot Synchronization**: Reads retained messages on boot to sync with JMRI
+- **Feedback Loop Prevention**: Smart message filtering prevents self-triggering
+- **Hostname Support**: Supports both IP and mDNS hostnames (e.g., "rpi-jmri.local")
 
-### 1. Copy Configuration File
+### Web Interface
+- **Dark/Light Mode**: Configurable theme with automatic persistence
+- **Device Status**: Real-time status display including WiFi and MQTT connection state
+- **Device Control Panel**: Interactive control of turnouts and signals
+- **Configuration**:
+  - WiFi settings
+  - MQTT broker settings (IP/hostname, port, client ID)
+  - Channel name and topic prefix
+- **Firmware Management**:
+  - OTA (Over-The-Air) updates
+  - Version display
+  - Backup/restore configuration
+  - Factory reset option
+  - Device restart control
 
-Copy the example configuration file to create your own:
+### Configuration
+- **WiFi**: Supports both station and AP modes
+  - Station mode for normal operation
+  - AP mode (ESP32_Config_XXXX) for initial setup
+- **Persistence**: All settings stored in non-volatile memory
+- **Defaults**: Sensible defaults provided in config.h
+- **Backup/Restore**: Export/import of all settings
 
-```bash
-cp config.example.h config.h
-```
-
-### 2. Edit Configuration
-
-Open `config.h` and modify the following settings:
-
-#### MQTT Configuration
-```cpp
-#define MQTT_BROKER "192.168.1.100"  // Your MQTT broker IP address
-#define MQTT_PORT 1883                // MQTT broker port
-#define MQTT_CLIENT_ID "esp32_jmri_client"
-#define MQTT_TOPIC_PREFIX "trains"    // Base topic for MQTT messages
-```
-
-#### WiFi Configuration
-```cpp
-#define DEFAULT_SSID "ESP32_Config"   // SSID for configuration mode
-#define DEFAULT_PASSWORD "12345678"    // Password for configuration mode
-```
-
-#### Pin Definitions
-```cpp
-#define SENSOR_PIN_1 4                // Sensor 1 input pin
-#define SENSOR_PIN_2 5                // Sensor 2 input pin
-#define SENSOR_PIN_3 18               // Sensor 3 input pin
-#define SENSOR_PIN_4 19               // Sensor 4 input pin
-#define TURNOUT_PIN_1 21              // Turnout 1 control pin
-#define TURNOUT_PIN_2 22              // Turnout 2 control pin
-#define SIGNAL_PIN_RED 23             // Red signal LED pin
-#define SIGNAL_PIN_YELLOW 25          // Yellow signal LED pin
-#define SIGNAL_PIN_GREEN 26           // Green signal LED pin
-#define STATUS_LED 2                  // Status LED pin
-```
-
-### 3. Timing Configuration
-```cpp
-#define MQTT_RETRY_INTERVAL 5000      // MQTT reconnection retry (5 seconds)
-#define STATUS_UPDATE_INTERVAL 10000   // Status updates (10 seconds)
-#define WIFI_RECONNECT_INTERVAL 30000 // WiFi reconnection (30 seconds)
-#define WIFI_MAX_ATTEMPTS 20          // Max WiFi connection attempts
-```
-
-## Hardware Setup
-
-### Required Components
-- ESP32 development board
-- 4 occupancy sensors (e.g., IR sensors, magnetic sensors)
-- 2 turnout motors or servos
-- 3 LEDs for traffic signal (red, yellow, green)
-- 220Ω resistors for LED current limiting
-- Breadboard and jumper wires
-
-### Pin Connections
-- **Sensors**: Connect to GPIO 4, 5, 18, 19 (with pull-up resistors)
-- **Turnouts**: Connect to GPIO 21, 22 (via relay modules if needed)
-- **Signals**: Connect LEDs to GPIO 23, 25, 26 (with 220Ω resistors)
-- **Status LED**: Connect to GPIO 2 (built-in LED on most ESP32 boards)
+### Reliability Features
+- **Auto-Reconnect**: Automatic reconnection for both WiFi and MQTT
+- **State Persistence**: Maintains correct state across reboots
+- **Error Recovery**: Graceful handling of connection failures
+- **Status Monitoring**: Comprehensive status reporting via web interface
 
 ## Installation
 
-### 1. Install Required Libraries
-In Arduino IDE, install these libraries:
-- `PubSubClient` by Nick O'Leary
-- `ArduinoJson` by Benoit Blanchon
-- `Preferences` (built into ESP32 core)
+1. Copy `config.example.h` to `config.h`
+2. Modify settings in `config.h` for your environment:
+   - WiFi credentials (optional, can be set via web interface)
+   - MQTT broker details (optional, can be set via web interface)
+   - Pin assignments (if using different GPIO pins)
+3. Flash to ESP32
+4. Connect to ESP32's AP (ESP32_Config_XXXX)
+5. Configure via web interface (http://192.168.4.1)
 
-### 2. Upload Sketch
-1. Open `esp32_jmri_mqtt_client.ino` in Arduino IDE
-2. Select your ESP32 board
-3. Upload the sketch
+## Hardware Setup
 
-### 3. Initial Setup
-1. Power on the ESP32
-2. Connect to the "ESP32_Config" WiFi network (password: 12345678)
-3. Navigate to `http://192.168.4.1`
-4. Enter your WiFi credentials
-5. The device will connect to your network
+### Pin Assignments (Default)
+- **Sensors**:
+  - Sensor 1: GPIO 4
+  - Sensor 2: GPIO 5
+  - Sensor 3: GPIO 18
+  - Sensor 4: GPIO 19
+- **Turnouts**:
+  - Turnout 1: GPIO 21
+  - Turnout 2: GPIO 22
+- **Signal**:
+  - Red: GPIO 23
+  - Yellow: GPIO 25
+  - Green: GPIO 26
+- **Status LED**: GPIO 2
 
-## MQTT Topics
+## MQTT Message Format
 
-The device uses the following MQTT topic structure:
-```
-trains/{MAC_ADDRESS}/sensors/{sensor_number}/status
-trains/{MAC_ADDRESS}/turnouts/{turnout_number}/status
-trains/{MAC_ADDRESS}/turnouts/{turnout_number}/control
-trains/{MAC_ADDRESS}/signals/{signal_number}/status
-trains/{MAC_ADDRESS}/signals/{signal_number}/control
-trains/{MAC_ADDRESS}/status
-```
+### Sensors
+- Topic: `/trains/track/sensor/[1-4]`
+- States: `ACTIVE` or `INACTIVE`
+- Direction: ESP32 → MQTT (read-only)
 
-### Publishing Commands
+### Turnouts
+- Topic: `/trains/track/turnout/[1-2]`
+- States: `THROWN` or `CLOSED`
+- Direction: Bidirectional
 
-#### Control Turnout
-```json
-// Topic: trains/{MAC}/turnouts/1/control
-{
-  "position": "thrown"  // or "normal"
-}
-```
+### Signals
+- Topic: `/trains/track/signal/1`
+- States: `RED`, `YELLOW`, or `GREEN`
+- Direction: Bidirectional
 
-#### Control Signal
-```json
-// Topic: trains/{MAC}/signals/1/control
-{
-  "aspect": "red"       // "red", "yellow", or "green"
-}
-```
+## Behavior Notes
 
-### Receiving Status
+### Sensor Operation
+- Sensors are "truth sources" - they report actual physical state
+- Only publish when physical state differs from commanded state
+- Use retained messages to maintain state across restarts
 
-#### Sensor Status
-```json
-{
-  "sensor": 1,
-  "state": "occupied",  // or "clear"
-  "timestamp": 1234567890
-}
-```
+### Turnout Operation
+- Accepts commands from MQTT
+- Publishes state changes from physical inputs
+- Maintains state across power cycles via retained messages
 
-#### Turnout Status
-```json
-{
-  "turnout": 1,
-  "position": "thrown", // or "normal"
-  "timestamp": 1234567890
-}
-```
+### Signal Operation
+- Three-aspect signal control
+- Visual feedback via web interface
+- State maintained via retained messages
 
-#### Signal Status
-```json
-{
-  "signal": 1,
-  "aspect": "red",      // "red", "yellow", or "green"
-  "timestamp": 1234567890
-}
-```
+### Web Interface
+- Real-time updates without page refresh
+- Dark/light mode persistence
+- Automatic reconnection handling
+- Mobile-friendly responsive design
 
-## Web Interface
+## Version History
 
-The device provides a web interface at its IP address for:
-- WiFi configuration
-- Status monitoring
-- OTA firmware updates
-- Device restart
-
-## Troubleshooting
-
-### Common Issues
-
-1. **WiFi Connection Fails**
-   - Check SSID and password in config.h
-   - Ensure WiFi network is 2.4GHz (ESP32 doesn't support 5GHz)
-
-2. **MQTT Connection Fails**
-   - Verify MQTT broker IP address and port
-   - Check if MQTT broker is running and accessible
-   - Ensure network allows MQTT traffic (port 1883)
-
-3. **Sensors Not Working**
-   - Verify pin connections
-   - Check if sensors are active-high or active-low
-   - Ensure proper power supply for sensors
-
-4. **OTA Updates Fail**
-   - Check WiFi connection stability
-   - Ensure sufficient flash memory
-   - Verify firmware file is compatible
-
-### Debug Information
-Enable Serial Monitor at 115200 baud to see debug information and status messages.
+### 3.0.0
+- Added mDNS hostname support for MQTT broker
+- Added MAC address-based unique identifiers
+- Improved backup/restore functionality
+- Enhanced web interface with better button grouping
+- Fixed MQTT topic structure
+- Added configuration persistence improvements
 
 ## License
 
-This project is open source. Feel free to modify and distribute according to your needs.
-
-## Support
-
-For issues and questions, please check the troubleshooting section above or create an issue in the project repository.
+This project is open source and available under the MIT License.

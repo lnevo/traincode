@@ -8,16 +8,17 @@
 #define CONFIG_H
 
 // Firmware version
-#define FIRMWARE_VERSION "1.0.0"
+#define FIRMWARE_VERSION "3.0.0"
 
 // Device configuration
 #define DEVICE_NAME "ESP32_JMRI_Client"
 
 // MQTT Configuration - MODIFY THESE FOR YOUR SETUP
-#define MQTT_BROKER "192.168.1.100"  // Change to your MQTT broker IP address
-#define MQTT_PORT 1883                // MQTT broker port (usually 1883 for non-SSL)
+#define MQTT_BROKER "192.168.1.100"  // Change to your MQTT broker IP address or hostname (e.g., "rpi-jmri.local")
+#define MQTT_PORT 1883               // MQTT broker port (usually 1883 for non-SSL)
 #define MQTT_CLIENT_ID "esp32_jmri_client"
-#define MQTT_TOPIC_PREFIX "trains"    // Base topic prefix for MQTT messages
+#define MQTT_CHANNEL_NAME "/trains/" // Channel name prefix (matches JMRI defaults)
+#define MQTT_TOPIC_PREFIX "track"    // Base topic prefix for MQTT messages
 
 // WiFi Configuration - MODIFY THESE FOR YOUR SETUP
 #define DEFAULT_SSID "ESP32_Config"   // SSID for configuration mode
