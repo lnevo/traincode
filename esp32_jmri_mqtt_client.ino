@@ -1003,8 +1003,8 @@ void handleRoot() {
   html += ".status-disconnected{background:#f8d7da;color:#721c24;}";
   
   // Theme toggle
-  html += ".theme-toggle{background:var(--accent-primary);color:white;border:none;padding:8px 16px;";
-  html += "border-radius:20px;cursor:pointer;font-size:0.9em;transition:all 0.3s;}";
+  html += ".theme-toggle{background:var(--accent-primary);color:white;border:none;padding:6px 12px;";
+  html += "border-radius:15px;cursor:pointer;font-size:0.8em;transition:all 0.3s;margin-top:15px;}";
   html += ".theme-toggle:hover{background:var(--accent-hover);}";
   
   // Container
@@ -1249,7 +1249,11 @@ void handleRoot() {
   html += "<h3>Upload New Firmware</h3>";
   html += "<div class=\"upload-form\">";
   html += "<input type=\"file\" id=\"firmware\" accept=\".bin\" onchange=\"validateFile(this)\" style=\"width:100%;padding:10px;margin:10px 0;border:2px dashed var(--border-color);border-radius:4px;background:var(--bg-secondary);color:var(--text-primary);\">";
-  html += "<button onclick=\"uploadFirmware()\" id=\"uploadBtn\" disabled style=\"width:100%;margin:10px 0;\">Upload Firmware</button>";
+  html += "<p style=\"color:var(--text-secondary);font-size:0.9em;margin:5px 0;\">Note: Upload the compiled .bin file from Arduino IDE (Sketch > Export Compiled Binary). Do not use .ino.merged.bin files.</p>";
+  html += "<div style=\"display:flex;gap:10px;\">";
+  html += "<button onclick=\"uploadFirmware()\" id=\"uploadBtn\" disabled style=\"flex:1;margin:10px 0;\">Upload Firmware</button>";
+  html += "<button onclick=\"cancelUpload()\" id=\"cancelBtn\" disabled style=\"background:var(--danger);flex:0 0 100px;margin:10px 0;\">Cancel</button>";
+  html += "</div>";
   html += "</div>";
   html += "<div class=\"progress\" style=\"width:100%;background:var(--bg-tertiary);border-radius:4px;margin:10px 0;height:20px;overflow:hidden;\">";
   html += "<div class=\"progress-bar\" id=\"progressBar\" style=\"height:100%;background:var(--accent-primary);border-radius:4px;width:0%;transition:width 0.3s;\"></div>";
@@ -1370,20 +1374,27 @@ void handleRoot() {
   html += "    }";
   html += "}";
   
+  html += "let currentUpload = null;";
+  html += "let popupShown = false;";
+  
   html += "function uploadFirmware() {";
   html += "    const fileInput = document.getElementById('firmware');";
   html += "    const file = fileInput.files[0];";
   html += "    const uploadBtn = document.getElementById('uploadBtn');";
+  html += "    const cancelBtn = document.getElementById('cancelBtn');";
   html += "    const progressBar = document.getElementById('progressBar');";
   html += "    const statusDiv = document.getElementById('uploadStatus');";
   html += "    if (!file) return;";
   html += "    uploadBtn.disabled = true;";
+  html += "    cancelBtn.disabled = false;";
   html += "    progressBar.style.width = '0%';";
+  html += "    popupShown = false;";
   html += "    statusDiv.innerHTML = '<div style=\"color:var(--info);padding:10px;border-radius:4px;background:var(--bg-secondary);\">Preparing upload...</div>';";
   html += "    const formData = new FormData();";
   html += "    formData.append('firmware', file);";
   html += "    const xhr = new XMLHttpRequest();";
-  html += "    xhr.upload.addEventListener('progress', function(e) {";
+  html += "    currentUpload = xhr;";
+    html += "    xhr.upload.addEventListener('progress', function(e) {";
   html += "        if (e.lengthComputable) {";
   html += "            const percentComplete = (e.loaded / e.total) * 100;";
   html += "            progressBar.style.width = percentComplete + '%';";
@@ -1391,21 +1402,44 @@ void handleRoot() {
   html += "        }";
   html += "    });";
   html += "    xhr.addEventListener('load', function() {";
+  html += "        currentUpload = null;";
+  html += "        cancelBtn.disabled = true;";
   html += "        if (xhr.status === 200) {";
-  html += "            statusDiv.innerHTML = '<div style=\"color:var(--success);padding:10px;border-radius:4px;background:var(--bg-secondary);\">Upload completed! Device will restart in 5 seconds...</div>';";
+  html += "            statusDiv.innerHTML = '<div style=\"color:var(--success);padding:10px;border-radius:4px;background:var(--bg-secondary);\">Upload completed! Device will restart...</div>';";
   html += "            progressBar.style.width = '100%';";
-  html += "            setTimeout(() => location.reload(), 5000);";
+  html += "            if (!popupShown) {";
+  html += "                popupShown = true;";
+  html += "                console.log('Upload successful, showing popup after 2 second delay...');";
+  html += "                setTimeout(function() { showRebootCountdown(); }, 2000);";
+  html += "            }";
   html += "        } else {";
   html += "            statusDiv.innerHTML = '<div style=\"color:var(--danger);padding:10px;border-radius:4px;background:var(--bg-secondary);\">Upload failed: ' + xhr.responseText + '</div>';";
   html += "            uploadBtn.disabled = false;";
   html += "        }";
   html += "    });";
   html += "    xhr.addEventListener('error', function() {";
+  html += "        currentUpload = null;";
+  html += "        cancelBtn.disabled = true;";
   html += "        statusDiv.innerHTML = '<div style=\"color:var(--danger);padding:10px;border-radius:4px;background:var(--bg-secondary);\">Upload failed: Network error</div>';";
   html += "        uploadBtn.disabled = false;";
   html += "    });";
   html += "    xhr.open('POST', '/doUpdate');";
   html += "    xhr.send(formData);";
+  html += "}";
+  
+  html += "function cancelUpload() {";
+  html += "    if (currentUpload) {";
+  html += "        currentUpload.abort();";
+  html += "        currentUpload = null;";
+  html += "        const uploadBtn = document.getElementById('uploadBtn');";
+  html += "        const cancelBtn = document.getElementById('cancelBtn');";
+  html += "        const progressBar = document.getElementById('progressBar');";
+  html += "        const statusDiv = document.getElementById('uploadStatus');";
+  html += "        uploadBtn.disabled = false;";
+  html += "        cancelBtn.disabled = true;";
+  html += "        progressBar.style.width = '0%';";
+  html += "        statusDiv.innerHTML = '<div style=\"color:var(--warning);padding:10px;border-radius:4px;background:var(--bg-secondary);\">Upload cancelled</div>';";
+  html += "    }";
   html += "}";
   
   html += "function restartDevice() {";
@@ -1416,6 +1450,72 @@ void handleRoot() {
   html += "            setTimeout(() => location.reload(), 10000);";
   html += "        })";
   html += "        .catch(error => alert('Restart request failed: ' + error));";
+  html += "    }";
+  html += "}";
+  
+  html += "function checkDeviceReady() {";
+  html += "    return fetch('/status', { method: 'GET', timeout: 2000 })";
+  html += "        .then(response => response.ok)";
+  html += "        .catch(() => false);";
+  html += "}";
+  
+  html += "function waitForDeviceAndRefresh() {";
+  html += "    const countdownEl = document.getElementById('countdownText');";
+  html += "    if (countdownEl) {";
+  html += "        countdownEl.textContent = 'Waiting for device to come back online...';";
+  html += "    }";
+  html += "    console.log('Checking if device is ready...');";
+  html += "    checkDeviceReady().then(ready => {";
+  html += "        if (ready) {";
+  html += "            console.log('Device is ready, refreshing...');";
+  html += "            const popupEl = document.getElementById('rebootPopup');";
+  html += "            const overlayEl = document.getElementById('rebootOverlay');";
+  html += "            if (popupEl) document.body.removeChild(popupEl);";
+  html += "            if (overlayEl) document.body.removeChild(overlayEl);";
+  html += "            showTab('firmware');";
+  html += "            location.reload();";
+  html += "        } else {";
+  html += "            console.log('Device not ready yet, checking again in 2 seconds...');";
+  html += "            setTimeout(waitForDeviceAndRefresh, 2000);";
+  html += "        }";
+  html += "    });";
+  html += "}";
+  
+  html += "function showRebootCountdown() {";
+  html += "    console.log('=== POPUP FUNCTION CALLED ===');";
+  html += "    try {";
+  html += "        let countdown = 15;";
+  html += "        const popup = document.createElement('div');";
+  html += "        popup.id = 'rebootPopup';";
+  html += "        popup.style.cssText = 'position:fixed !important;top:50% !important;left:50% !important;transform:translate(-50%,-50%) !important;background:#ffffff !important;border:3px solid #007bff !important;border-radius:10px !important;padding:30px !important;text-align:center !important;z-index:99999 !important;box-shadow:0 10px 30px rgba(0,0,0,0.9) !important;min-width:350px !important;color:#333 !important;font-family:Arial,sans-serif !important;';";
+  html += "        popup.innerHTML = '<h3 style=\"margin:0 0 15px 0 !important;color:#333 !important;font-size:1.3em !important;\">🎉 Firmware Update Complete!</h3><p style=\"margin:0 0 15px 0 !important;color:#666 !important;\">Device is rebooting...</p><div id=\"countdownText\" style=\"font-size:1.2em !important;font-weight:bold !important;color:#007bff !important;\">Waiting ' + countdown + ' seconds for reboot</div>';";
+  html += "        const overlay = document.createElement('div');";
+  html += "        overlay.id = 'rebootOverlay';";
+  html += "        overlay.style.cssText = 'position:fixed !important;top:0 !important;left:0 !important;width:100% !important;height:100% !important;background:rgba(0,0,0,0.8) !important;z-index:99998 !important;';";
+  html += "        document.body.appendChild(overlay);";
+  html += "        document.body.appendChild(popup);";
+  html += "        console.log('Popup elements added to DOM');";
+  html += "        console.log('Popup element:', popup);";
+  html += "        console.log('Overlay element:', overlay);";
+  html += "        const timer = setInterval(() => {";
+  html += "            countdown--;";
+  html += "            const countdownEl = document.getElementById('countdownText');";
+  html += "            if (countdownEl) {";
+  html += "                if (countdown > 0) {";
+  html += "                    countdownEl.textContent = 'Waiting ' + countdown + ' seconds for reboot';";
+  html += "                }";
+  html += "            }";
+  html += "            console.log('Countdown: ' + countdown);";
+  html += "            if (countdown <= 0) {";
+  html += "                clearInterval(timer);";
+  html += "                console.log('Initial wait finished, checking device status...');";
+  html += "                waitForDeviceAndRefresh();";
+  html += "            }";
+  html += "        }, 1000);";
+  html += "    } catch (error) {";
+  html += "        console.error('Error in showRebootCountdown:', error);";
+  html += "        alert('Error creating popup: ' + error.message);";
+  html += "        setTimeout(() => location.reload(), 10000);";
   html += "    }";
   html += "}";
   
@@ -1741,12 +1841,16 @@ void handleDoUpdate() {
   }
 }
 
+// Static variable to track if update has been initialized
+static bool updateInitialized = false;
+
 void handleUpdateBody() {
   HTTPUpload& upload = web_server.upload();
   
   if (upload.status == UPLOAD_FILE_START) {
     Serial.println("=== OTA Update Started ===");
     Serial.println("File name: " + upload.filename);
+    Serial.println("Upload status: " + String(upload.status));
     
     // Check if we have enough free space
     size_t freeSpace = ESP.getFreeSketchSpace();
@@ -1754,18 +1858,20 @@ void handleUpdateBody() {
     
     if (freeSpace < 100000) {  // Less than 100KB free
       Serial.println("❌ Error: Insufficient free space for update");
-      return;
-    }
+                return;
+            }
+            
+    // Debug upload information
+    Serial.println("Upload total size: " + String(upload.totalSize) + " bytes");
+    Serial.println("Upload current size: " + String(upload.currentSize) + " bytes");
     
-    // Start the update process
-    if (!Update.begin(freeSpace - 0x1000)) {
-      Serial.println("❌ Error: Update.begin() failed");
-      Serial.println("Update error: " + String(Update.getError()));
-      return;
-    }
+    Serial.println("Starting OTA update...");
     
-    Serial.println("✅ Update started successfully");
-    Serial.println("Expected size: " + String(Update.size()) + " bytes");
+    // Reset initialization flag
+    updateInitialized = false;
+    
+    // Don't call Update.begin() here - wait for first write chunk to determine size
+    Serial.println("✅ Upload started - waiting for first chunk to determine size...");
     
   } else if (upload.status == UPLOAD_FILE_WRITE) {
     if (upload.buf == nullptr) {
@@ -1773,36 +1879,82 @@ void handleUpdateBody() {
       return;
     }
     
-    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
-      Serial.println("❌ Error: Update.write() failed");
-      Serial.println("Update error: " + String(Update.getError()));
-      return;
+    // Initialize Update library on first write chunk
+    if (!updateInitialized) {
+      Serial.println("=== First Write Chunk ===");
+      Serial.println("Chunk size: " + String(upload.currentSize) + " bytes");
+      
+      // Debug: Check first few bytes of the chunk for firmware header
+      Serial.print("First chunk header bytes: ");
+      for (int i = 0; i < min(16, (int)upload.currentSize); i++) {
+        Serial.printf("%02X ", upload.buf[i]);
+      }
+      Serial.println();
+      
+      // Use maximum available space and let Update library determine actual size from firmware
+      size_t maxUpdateSize = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
+      Serial.println("Max update size: " + String(maxUpdateSize) + " bytes");
+      
+      if (!Update.begin(maxUpdateSize, U_FLASH)) {
+        Serial.println("❌ Error: Update.begin() failed");
+        Serial.println("Update error: " + String(Update.getError()));
+        Update.printError(Serial);
+        return;
+      }
+      
+      updateInitialized = true;
+      Serial.println("✅ Update initialized successfully");
+      Serial.println("Update size after begin: " + String(Update.size()) + " bytes");
     }
     
-    // Calculate progress
-    size_t progress = (Update.progress() * 100) / Update.size();
-    Serial.println("📤 Chunk written: " + String(upload.currentSize) + " bytes");
-    Serial.println("📊 Progress: " + String(progress) + "%");
-    
-  } else if (upload.status == UPLOAD_FILE_END) {
-    if (Update.end()) {
-      Serial.println("✅ Update completed successfully!");
-      Serial.println("Final size: " + String(Update.size()) + " bytes");
-      
-      // Verify the update
-  if (Update.hasError()) {
-        Serial.println("❌ Update verification failed");
-        Serial.println("Error: " + String(Update.getError()));
+    size_t written = Update.write(upload.buf, upload.currentSize);
+    if (written != upload.currentSize) {
+      Serial.println("❌ Error: Update.write() failed");
+      Serial.println("Expected: " + String(upload.currentSize) + " bytes, Written: " + String(written) + " bytes");
+      Serial.println("Update error: " + String(Update.getError()));
+      Serial.println("Current progress: " + String(Update.progress()) + " bytes");
+      Update.printError(Serial);
     return;
   }
   
-      Serial.println("🔄 Restarting device in 3 seconds...");
-      delay(3000);
-      ESP.restart();
+    // Calculate progress
+    if (Update.size() > 0) {
+      size_t progress = (Update.progress() * 100) / Update.size();
+      Serial.println("📤 Chunk written: " + String(upload.currentSize) + " bytes");
+      Serial.println("📊 Progress: " + String(progress) + "% (" + String(Update.progress()) + "/" + String(Update.size()) + ")");
+    }
+    
+  } else if (upload.status == UPLOAD_FILE_END) {
+    Serial.println("=== Upload File End ===");
+    Serial.println("Total bytes received: " + String(Update.progress()));
+    
+    // Reset initialization flag for next upload
+    updateInitialized = false;
+    
+    if (Update.end(true)) {  // true = set new sketch as boot partition
+      Serial.println("✅ Update completed successfully!");
+      Serial.println("Final size: " + String(Update.size()) + " bytes");
       
+      if (Update.isFinished()) {
+        Serial.println("✅ Update is finished and verified");
+        Serial.println("🔄 Restarting device in 3 seconds...");
+        delay(3000);
+        ESP.restart();
     } else {
+        Serial.println("❌ Update not finished properly");
+    }
+      
+  } else {
       Serial.println("❌ Error: Update.end() failed");
       Serial.println("Update error: " + String(Update.getError()));
+      Update.printError(Serial);
+    }
+    
+    // Check for any remaining errors
+    if (Update.hasError()) {
+      Serial.println("❌ Final verification failed");
+      Serial.println("Error: " + String(Update.getError()));
+      Update.printError(Serial);
     }
   }
 }
