@@ -25,6 +25,7 @@
 #include <Preferences.h>
 #include <ArduinoOTA.h>
 #include <ESPmDNS.h>
+#include "html_content.h"
 
 // WiFi configuration
 String default_ssid = "";  // Will be set in setup using MAC address
@@ -459,6 +460,13 @@ void setupWebServer() {
 
   web_server.on("/doUpdate", HTTP_POST, handleDoUpdate, handleUpdateBody);
   
+  // Add missing endpoints that the HTML expects
+  web_server.on("/devices", HTTP_GET, handleDevices);
+  web_server.on("/wifi", HTTP_POST, handleWiFiConfig);
+  web_server.on("/mqtt", HTTP_POST, handleMQTTConfig);
+  web_server.on("/config", HTTP_GET, handleConfig);
+  web_server.on("/upload", HTTP_POST, handleDoUpdate, handleUpdateBody);
+  
   web_server.begin();
   Serial.println("Web server started");
 }
@@ -717,6 +725,12 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   // Handle sensor truth verification - respond with actual state if different
   if (topic_str.indexOf("/sensor/") > 0) {
     Serial.println("🎯 Processing sensor verification message");
+    Serial.println("  Sensor topic detected: " + topic_str);
+    Serial.println("  Payload: " + payload_str);
+    Serial.println("  Current sensor states:");
+    for (int i = 0; i < 4; i++) {
+      Serial.println("    Sensor " + String(i+1) + ": " + String(sensor_states[i] ? "ACTIVE" : "INACTIVE"));
+    }
     handleSensorVerification(topic_str, payload_str);
   }
 }
@@ -887,6 +901,8 @@ void handleSignalControl(String topic, String payload) {
 }
 
 void handleSensorVerification(String topic, String payload) {
+  Serial.println("=== Sensor Verification START ===");
+  
   // Extract sensor number from topic (e.g., "trains/track/sensor/1" -> sensor 1)
   int sensor_num = 0;
   
@@ -895,6 +911,7 @@ void handleSensorVerification(String topic, String payload) {
   if (lastSlash > 0) {
     String sensor_str = topic.substring(lastSlash + 1);
     sensor_num = sensor_str.toInt();
+    Serial.println("  Extracted sensor number: " + String(sensor_num));
   }
   
   // Validate sensor number
@@ -911,6 +928,7 @@ void handleSensorVerification(String topic, String payload) {
   Serial.println("Topic: " + topic);
   Serial.println("JMRI expects: " + payload);
   Serial.println("Actual physical state: " + actual_state);
+  Serial.println("Physical pin state: " + String(digitalRead(sensor_num == 1 ? SENSOR_PIN_1 : sensor_num == 2 ? SENSOR_PIN_2 : sensor_num == 3 ? SENSOR_PIN_3 : SENSOR_PIN_4)));
   
   // Only publish if JMRI's expectation differs from reality
   if (payload != actual_state) {
@@ -921,7 +939,7 @@ void handleSensorVerification(String topic, String payload) {
     Serial.println("✅ JMRI state matches actual sensor state - no publish needed");
   }
   
-  Serial.println("============================");
+  Serial.println("=== Sensor Verification END ===");
 }
 
 void handleSensors() {
@@ -1029,658 +1047,49 @@ void publishInitialStatus() {
 
 // Web server handlers
 void handleRoot() {
-  String html = "<!DOCTYPE html><html><head>";
-  html += "<title>ESP32 JMRI Client</title>";
-  html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
-  html += "<style>";
+  String html = getMainPageHTML();
   
-  // CSS Variables for theming
-  html += ":root{";
-  html += "--bg-primary:#ffffff;--bg-secondary:#f8f9fa;--bg-tertiary:#f5f5f5;";
-  html += "--text-primary:#333333;--text-secondary:#666666;--text-muted:#999999;";
-  html += "--border-color:#dee2e6;--shadow:0 2px 10px rgba(0,0,0,0.1);";
-  html += "--accent-primary:#007bff;--accent-hover:#0056b3;";
-  html += "--success:#28a745;--danger:#dc3545;--warning:#ffc107;--info:#17a2b8;";
-  html += "}";
-  
-  // Dark mode variables
-  html += "[data-theme='dark']{";
-  html += "--bg-primary:#1a1a1a;--bg-secondary:#2d2d2d;--bg-tertiary:#333333;";
-  html += "--text-primary:#ffffff;--text-secondary:#cccccc;--text-muted:#999999;";
-  html += "--border-color:#444444;--shadow:0 2px 10px rgba(0,0,0,0.3);";
-  html += "--accent-primary:#0d6efd;--accent-hover:#0b5ed7;";
-  html += "}";
-  
-  // Base styles
-  html += "*{box-sizing:border-box;}";
-  html += "body{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;margin:0;padding:0;";
-  html += "background-color:var(--bg-tertiary);color:var(--text-primary);transition:all 0.3s ease;}";
-  
-  // Header styles
-  html += ".header{background:var(--bg-primary);border-bottom:2px solid var(--border-color);";
-  html += "padding:20px;box-shadow:var(--shadow);}";
-  html += ".header-content{max-width:1200px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;}";
-  html += ".device-info h1{margin:0;color:var(--text-primary);font-size:1.8em;}";
-  html += ".device-status{text-align:right;font-size:0.9em;color:var(--text-secondary);}";
-  html += ".device-status div{margin:2px 0;}";
-  html += ".status-badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:0.8em;margin-left:5px;}";
-  html += ".status-connected{background:#d4edda;color:#155724;}";
-  html += ".status-disconnected{background:#f8d7da;color:#721c24;}";
-  
-  // Theme toggle
-  html += ".theme-toggle{background:var(--accent-primary);color:white;border:none;padding:6px 12px;";
-  html += "border-radius:15px;cursor:pointer;font-size:0.8em;transition:all 0.3s;margin-top:15px;}";
-  html += ".theme-toggle:hover{background:var(--accent-hover);}";
-  
-  // Container
-  html += ".container{max-width:1200px;margin:0 auto;padding:20px;}";
-  
-  // Tab navigation
-  html += ".tab-nav{display:flex;background:var(--bg-primary);border-radius:8px;overflow:hidden;";
-  html += "box-shadow:var(--shadow);margin-bottom:20px;}";
-  html += ".tab-btn{flex:1;padding:15px 20px;background:var(--bg-secondary);border:none;";
-  html += "color:var(--text-secondary);cursor:pointer;font-size:1em;transition:all 0.3s;";
-  html += "border-right:1px solid var(--border-color);}";
-  html += ".tab-btn:last-child{border-right:none;}";
-  html += ".tab-btn.active{background:var(--accent-primary);color:white;}";
-  html += ".tab-btn:hover:not(.active){background:var(--bg-tertiary);}";
-  
-  // Tab content
-  html += ".tab-content{display:none;background:var(--bg-primary);padding:20px;";
-  html += "border-radius:8px;box-shadow:var(--shadow);}";
-  html += ".tab-content.active{display:block;}";
-  
-  // Sections and forms
-  html += ".section{margin:20px 0;}";
-  html += ".form-group{margin-bottom:15px;}";
-  html += "label{display:block;margin-bottom:5px;font-weight:600;color:var(--text-primary);}";
-  html += "input[type=text],input[type=password]{width:100%;padding:10px;";
-  html += "border:2px solid var(--border-color);border-radius:6px;background:var(--bg-secondary);";
-  html += "color:var(--text-primary);font-size:1em;transition:border-color 0.3s;}";
-  html += "input:focus{outline:none;border-color:var(--accent-primary);}";
-  html += "button{background:var(--accent-primary);color:white;padding:10px 20px;";
-  html += "border:none;border-radius:6px;cursor:pointer;font-size:1em;transition:all 0.3s;}";
-  html += "button:hover{background:var(--accent-hover);transform:translateY(-1px);}";
-  
-  // Device table
-  html += ".device-table{width:100%;border-collapse:collapse;margin-top:10px;";
-  html += "background:var(--bg-primary);border-radius:8px;overflow:hidden;box-shadow:var(--shadow);}";
-  html += ".device-table th,.device-table td{padding:12px;text-align:left;";
-  html += "border-bottom:1px solid var(--border-color);}";
-  html += ".device-table th{background:var(--bg-secondary);font-weight:600;color:var(--text-primary);}";
-  html += ".device-table tr:hover{background:var(--bg-secondary);}";
-  html += ".control-btn{padding:6px 12px;margin:2px;border:none;border-radius:4px;";
-  html += "cursor:pointer;font-size:0.9em;transition:all 0.3s;}";
-  html += ".btn-active{background:#28a745;color:white;font-weight:bold;box-shadow:0 2px 4px rgba(40,167,69,0.3);}";
-  html += ".btn-inactive{background:#dc3545;color:white;opacity:0.5;}";
-  html += ".btn-red{background:#dc3545;color:white;opacity:0.5;}";
-  html += ".btn-red-active{background:#dc3545;color:white;opacity:1.0;font-weight:bold;}";
-  html += ".btn-yellow{background:#ffc107;color:white;opacity:0.5;}";
-  html += ".btn-yellow-active{background:#ffc107;color:white;opacity:1.0;font-weight:bold;}";
-  html += ".btn-green{background:#28a745;color:white;opacity:0.5;}";
-  html += ".btn-green-active{background:#28a745;color:white;opacity:1.0;font-weight:bold;}";
-  html += ".btn-inactive:hover{opacity:1.0!important;background:#dc3545!important;}";
-  html += ".btn-red:hover{opacity:1.0!important;background:#dc3545!important;}";
-  html += ".btn-yellow:hover{opacity:1.0!important;background:#ffc107!important;}";
-  html += ".btn-green:hover{opacity:1.0!important;background:#28a745!important;}";
-  html += ".btn-active:hover{background:#28a745!important;}";
-  html += ".btn-red-active:hover{background:#dc3545!important;}";
-  html += ".btn-yellow-active:hover{background:#ffc107!important;}";
-  html += ".btn-green-active:hover{background:#28a745!important;}";
-  
-  // Status display
-  html += ".status-display{background:var(--bg-secondary);border-radius:8px;padding:20px;";
-  html += "border:1px solid var(--border-color);}";
-  html += ".status-json{font-family:'Courier New',monospace;font-size:0.9em;";
-  html += "white-space:pre-wrap;word-wrap:break-word;background:var(--bg-tertiary);";
-  html += "padding:15px;border-radius:6px;max-height:400px;overflow-y:auto;";
-  html += "border:1px solid var(--border-color);}";
-  
-  // Utility classes
-  html += ".text-center{text-align:center;}";
-  html += ".mb-3{margin-bottom:1rem;}";
-  html += ".mt-3{margin-top:1rem;}";
-  html += "@media (max-width:768px){";
-  html += ".header-content{flex-direction:column;text-align:center;}";
-  html += ".device-status{text-align:center;margin-top:10px;}";
-  html += ".tab-nav{flex-direction:column;}";
-  html += "}";
-  
-  html += "</style>";
-  html += "</head><body>";
-  
-  // Header with device info
-  html += "<div class=\"header\">";
-  html += "<div class=\"header-content\">";
-  html += "<div class=\"device-info\">";
-  html += "<h1>ESP32 JMRI Client</h1>";
-  html += "<p style=\"margin:5px 0 0 0;color:var(--text-secondary);font-size:0.9em;\">Client ID: " + String(MQTT_CLIENT_ID) + "</p>";
-  html += "</div>";
-  html += "<div class=\"device-status\">";
-  html += "<div>IP: " + WiFi.localIP().toString();
-  if (WiFi.status() == WL_CONNECTED) {
-    html += "<span class=\"status-badge status-connected\">WiFi Connected</span>";
-  } else {
-    html += "<span class=\"status-badge status-disconnected\">WiFi Disconnected</span>";
-  }
-  html += "</div>";
-  html += "<div>MQTT: " + mqtt_broker_ip + ":" + String(mqtt_broker_port);
-  if (mqtt_client.connected()) {
-    html += "<span class=\"status-badge status-connected\">Connected</span>";
-  } else {
-    html += "<span class=\"status-badge status-disconnected\">Disconnected</span>";
-  }
-  html += "</div>";
-  html += "<button class=\"theme-toggle\" onclick=\"toggleTheme()\">Light Mode</button>";
-  html += "</div>";
-  html += "</div>";
-  
-  html += "<div class=\"container\">";
-  
-  // Tab navigation
-  html += "<div class=\"tab-nav\">";
-  html += "<button class=\"tab-btn active\" onclick=\"showTab('status')\">Device Status</button>";
-  html += "<button class=\"tab-btn\" onclick=\"showTab('setup')\">Setup</button>";
-  html += "<button class=\"tab-btn\" onclick=\"showTab('firmware')\">Firmware</button>";
-  html += "</div>";
-  
-  // ===== STATUS TAB =====
-  html += "<div id=\"status-tab\" class=\"tab-content active\">";
-  
-  // Device Status Table (Server-side rendered) - moved to top
-  html += "<div class=\"section\">";
-  html += "<h2>Device Control Panel</h2>";
-  html += "<table class=\"device-table\">";
-  html += "<thead><tr><th>Type</th><th>Number</th><th>State</th><th>Control</th></tr></thead>";
-  html += "<tbody id=\"device-table-body\">";
-  
-  // Add sensors (read-only)
-  for (int i = 0; i < 4; i++) {
-    html += "<tr><td>Sensor</td><td>" + String(i + 1) + "</td>";
-    html += "<td>" + String(sensor_states[i] ? "ACTIVE" : "INACTIVE") + "</td>";
-    html += "<td><em>Read-only</em></td></tr>";
-  }
-  
-  // Add turnouts (with controls)
-  for (int i = 0; i < 2; i++) {
-    html += "<tr><td>Turnout</td><td>" + String(i + 1) + "</td>";
-    html += "<td>" + String(turnout_states[i] ? "THROWN" : "CLOSED") + "</td>";
-    html += "<td>";
-    html += "<button onclick=\"controlDevice(event,'turnout'," + String(i + 1) + ",'THROWN')\" class='control-btn " + String(turnout_states[i] ? "btn-active" : "btn-inactive") + "'>THROWN</button> ";
-    html += "<button onclick=\"controlDevice(event,'turnout'," + String(i + 1) + ",'CLOSED')\" class='control-btn " + String(!turnout_states[i] ? "btn-active" : "btn-inactive") + "'>CLOSED</button>";
-    html += "</td></tr>";
-  }
-  
-  // Add signal (with controls)
-  String signal_aspect = (signal_state == 0) ? "RED" : (signal_state == 1) ? "YELLOW" : "GREEN";
-  html += "<tr><td>Signal</td><td>1</td>";
-  html += "<td>" + signal_aspect + "</td>";
-  html += "<td>";
-  html += "<button onclick=\"controlDevice(event,'signal',1,'RED')\" class='control-btn " + String(signal_state == 0 ? "btn-red-active" : "btn-red") + "'>RED</button> ";
-  html += "<button onclick=\"controlDevice(event,'signal',1,'YELLOW')\" class='control-btn " + String(signal_state == 1 ? "btn-yellow-active" : "btn-yellow") + "'>YELLOW</button> ";
-  html += "<button onclick=\"controlDevice(event,'signal',1,'GREEN')\" class='control-btn " + String(signal_state == 2 ? "btn-green-active" : "btn-green") + "'>GREEN</button>";
-  html += "</td></tr>";
-  
-  html += "</tbody>";
-  html += "</table>";
-  html += "</div>";
-  
-  // Status Information Section
-  html += "<div class=\"section\">";
-  html += "<h2>System Status</h2>";
-  html += "<div class=\"status-display\">";
-  html += "<div id=\"status\"></div>";
-  html += "<div class=\"button-group mt-3\">";
-  html += "<button onclick=\"checkStatus()\">Refresh Status JSON</button>";
-  html += "</div>";
-  html += "</div>";
-  html += "</div>";
-  
-  html += "</div>"; // End Status Tab
-  
-  // ===== SETUP TAB =====
-  html += "<div id=\"setup-tab\" class=\"tab-content\">";
-  
-  // WiFi Configuration Section
-  html += "<div class=\"section\">";
-  html += "<h2>WiFi Configuration</h2>";
-  html += "<form id=\"wifiForm\">";
-  html += "<div class=\"form-group\">";
-  html += "<label for=\"ssid\">WiFi SSID:</label>";
-  html += "<input type=\"text\" id=\"ssid\" name=\"ssid\" value=\"" + wifi_ssid + "\" required>";
-  html += "</div>";
-  html += "<div class=\"form-group\">";
-  html += "<label for=\"password\">WiFi Password:</label>";
-  html += "<input type=\"password\" id=\"password\" name=\"password\" value=\"" + wifi_password + "\" required>";
-  html += "</div>";
-  html += "<button type=\"submit\">Update WiFi</button>";
-  html += "</form>";
-  html += "</div>";
-  
-  // MQTT Configuration Section
-  html += "<div class=\"section\">";
-  html += "<h2>MQTT Configuration</h2>";
-  html += "<form id=\"mqttForm\">";
-  html += "<div class=\"form-group\">";
-  html += "<label for=\"mqtt_broker\">MQTT Broker IP:</label>";
-  html += "<input type=\"text\" id=\"mqtt_broker\" name=\"mqtt_broker\" value=\"" + mqtt_broker_ip + "\" required>";
-  html += "</div>";
-  html += "<div class=\"form-group\">";
-  html += "<label for=\"mqtt_port\">MQTT Port:</label>";
-  html += "<input type=\"text\" id=\"mqtt_port\" name=\"mqtt_port\" value=\"" + String(mqtt_broker_port) + "\" required>";
-  html += "</div>";
-  html += "<div class=\"form-group\">";
-  html += "<label for=\"mqtt_client_id\">Client ID:</label>";
-  html += "<input type=\"text\" id=\"mqtt_client_id\" name=\"mqtt_client_id\" value=\"" + String(MQTT_CLIENT_ID) + "\" required>";
-  html += "</div>";
-  html += "<div class=\"form-group\">";
-  html += "<label for=\"mqtt_channel_name\">Channel Name:</label>";
-  html += "<input type=\"text\" id=\"mqtt_channel_name\" name=\"mqtt_channel_name\" value=\"" + mqtt_channel_name + "\" required>";
-  html += "</div>";
-  html += "<div class=\"form-group\">";
-  html += "<label for=\"mqtt_topic_prefix\">Topic Prefix:</label>";
-  html += "<input type=\"text\" id=\"mqtt_topic_prefix\" name=\"mqtt_topic_prefix\" value=\"" + String(MQTT_TOPIC_PREFIX) + "\" required>";
-  html += "</div>";
-  html += "<button type=\"submit\">Update MQTT</button>";
-  html += "</form>";
-  html += "</div>";
-  
-  html += "</div>"; // End Setup Tab
-  
-  // ===== FIRMWARE TAB =====
-  html += "<div id=\"firmware-tab\" class=\"tab-content\">";
-  
-  html += "<div class=\"section\">";
-  html += "<h2>Firmware Management</h2>";
-  html += "<p id=\"firmware-version\" style=\"color:var(--text-secondary);margin-bottom:20px;\">Current Version: " + String(FIRMWARE_VERSION) + "</p>";
-  
-  // Firmware Upload Section
-  html += "<div class=\"section\">";
-  html += "<h3>Upload New Firmware</h3>";
-  html += "<div class=\"upload-form\">";
-  html += "<input type=\"file\" id=\"firmware\" accept=\".bin\" onchange=\"validateFile(this)\" style=\"width:100%;padding:10px;margin:10px 0;border:2px dashed var(--border-color);border-radius:4px;background:var(--bg-secondary);color:var(--text-primary);\">";
-  html += "<p style=\"color:var(--text-secondary);font-size:0.9em;margin:5px 0;\">Note: Upload the compiled .bin file from Arduino IDE (Sketch > Export Compiled Binary). Do not use .ino.merged.bin files.</p>";
-  html += "<div style=\"display:flex;gap:10px;\">";
-  html += "<button onclick=\"uploadFirmware()\" id=\"uploadBtn\" disabled style=\"flex:1;margin:10px 0;\">Upload Firmware</button>";
-  html += "<button onclick=\"cancelUpload()\" id=\"cancelBtn\" disabled style=\"background:var(--danger);flex:0 0 100px;margin:10px 0;\">Cancel</button>";
-  html += "</div>";
-  html += "</div>";
-  html += "<div class=\"progress\" style=\"width:100%;background:var(--bg-tertiary);border-radius:4px;margin:10px 0;height:20px;overflow:hidden;\">";
-  html += "<div class=\"progress-bar\" id=\"progressBar\" style=\"height:100%;background:var(--accent-primary);border-radius:4px;width:0%;transition:width 0.3s;\"></div>";
-  html += "</div>";
-  html += "<div id=\"uploadStatus\"></div>";
-  html += "</div>";
-  
-  // Device Management Section
-  html += "<div class=\"section\">";
-  html += "<h3>Device Management</h3>";
-  html += "<div class=\"button-group\" style=\"display:flex;gap:10px;margin-bottom:20px;\">";
-  html += "<button onclick=\"restartDevice()\" style=\"background:var(--accent-primary);\">Restart Device</button>";
-  html += "<span style=\"width:20px;\"></span>";  // Spacer
-  html += "<a href=\"/backup\" class=\"button\" style=\"background:var(--accent-primary);text-decoration:none;color:white;padding:10px 20px;border-radius:6px;\">Download Backup</a>";
-  html += "<button onclick=\"restoreConfig()\" id=\"restoreBtn\" disabled style=\"background:var(--accent-primary);\">Restore Configuration</button>";
-  html += "<span style=\"width:20px;\"></span>";  // Spacer
-  html += "<button onclick=\"resetSavedVariables()\" style=\"background:var(--danger);\">Reset Saved Variables</button>";
-  html += "</div>";
-  html += "<div class=\"upload-form\">";
-  html += "<input type=\"file\" id=\"configFile\" accept=\".json\" onchange=\"validateConfigFile(this)\" style=\"width:100%;padding:10px;margin:10px 0;border:2px dashed var(--border-color);border-radius:4px;background:var(--bg-secondary);color:var(--text-primary);\">";
-  html += "</div>";
-  html += "<p style=\"color:var(--text-secondary);font-size:0.9em;margin-top:10px;\">Backup includes all WiFi, MQTT, and device settings. Reset will clear all saved settings. Device will restart after restore or reset.</p>";
-  html += "</div>";
-  
-  html += "</div>"; // End Firmware Tab
-  
-  html += "</div>"; // End Container
-  
-  html += "<script>";
-  
-  // Theme toggle function
-  html += "function toggleTheme() {";
-  html += "    const body = document.body;";
-  html += "    const isDark = body.getAttribute('data-theme') === 'dark';";
-  html += "    body.setAttribute('data-theme', isDark ? 'light' : 'dark');";
-  html += "    const btn = document.querySelector('.theme-toggle');";
-  html += "    btn.textContent = isDark ? 'Dark Mode' : 'Light Mode';";
-  html += "    localStorage.setItem('theme', isDark ? 'light' : 'dark');";
-  html += "}";
-  
-  // Tab switching function
-  html += "function showTab(tabName) {";
-  html += "    document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));";
-  html += "    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));";
-  html += "    document.getElementById(tabName + '-tab').classList.add('active');";
-  html += "    event.target.classList.add('active');";
-  html += "}";
-  
-  // Initialize theme from localStorage (default to dark)
-  html += "const savedTheme = localStorage.getItem('theme') || 'dark';";
-  html += "document.body.setAttribute('data-theme', savedTheme);";
-  html += "document.querySelector('.theme-toggle').textContent = savedTheme === 'dark' ? 'Light Mode' : 'Dark Mode';";
-  html += "const savedTab = localStorage.getItem('activeTab');";
-  html += "if (savedTab) {";
-  html += "    setTimeout(() => {";
-  html += "        showTab(savedTab);";
-  html += "        localStorage.removeItem('activeTab');";
-  html += "    }, 200);";
-  html += "}";
-  
-  // Form handlers
-  html += "document.getElementById('wifiForm').onsubmit = function(e) {";
-  html += "    e.preventDefault();";
-  html += "    const formData = new FormData();";
-  html += "    formData.append('ssid', document.getElementById('ssid').value);";
-  html += "    formData.append('password', document.getElementById('password').value);";
-  html += "    fetch('/configure', { method: 'POST', body: formData })";
-  html += "    .then(response => response.text())";
-  html += "    .then(data => {";
-  html += "        document.getElementById('status').innerHTML = '<div class=\"status success\">' + data + '</div>';";
-  html += "    })";
-  html += "    .catch(error => {";
-  html += "        document.getElementById('status').innerHTML = '<div class=\"status error\">Error: ' + error + '</div>';";
-  html += "    });";
-  html += "};";
-  
-  html += "document.getElementById('mqttForm').onsubmit = function(e) {";
-  html += "    e.preventDefault();";
-  html += "    const formData = new FormData();";
-  html += "    formData.append('mqtt_broker', document.getElementById('mqtt_broker').value);";
-  html += "    formData.append('mqtt_port', document.getElementById('mqtt_port').value);";
-  html += "    formData.append('mqtt_client_id', document.getElementById('mqtt_client_id').value);";
-  html += "    formData.append('mqtt_channel_name', document.getElementById('mqtt_channel_name').value);";
-  html += "    formData.append('mqtt_topic_prefix', document.getElementById('mqtt_topic_prefix').value);";
-  html += "    fetch('/configure_mqtt', { method: 'POST', body: formData })";
-  html += "    .then(response => response.text())";
-  html += "    .then(data => {";
-  html += "        document.getElementById('status').innerHTML = '<div class=\"status success\">' + data + '</div>';";
-  html += "    })";
-  html += "    .catch(error => {";
-  html += "        document.getElementById('status').innerHTML = '<div class=\"status error\">Error: ' + error + '</div>';";
-  html += "    });";
-  html += "};";
-  
-  // Status check function
-  html += "function checkStatus() {";
-  html += "    fetch('/status')";
-  html += "    .then(response => response.json())";
-  html += "    .then(data => {";
-  html += "        const prettyJson = JSON.stringify(data, null, 2);";
-  html += "        document.getElementById('status').innerHTML = '<div class=\"status success\"><h3>Device Status JSON</h3><pre class=\"status-json\">' + prettyJson + '</pre></div>';";
-  html += "    })";
-  html += "    .catch(error => {";
-  html += "        document.getElementById('status').innerHTML = '<div class=\"status error\">Error: ' + error + '</div>';";
-  html += "    });";
-  html += "}";
-  
-  // Auto-refresh functionality
-  html += "let lastHash = '';";
-  html += "function checkChanges() {";
-  html += "    fetch('/status').then(r => r.json()).then(d => {";
-  html += "        let h = '';";
-  html += "        if(d.sensor_states) d.sensor_states.forEach(s => h += s.state);";
-  html += "        if(d.turnout_states) d.turnout_states.forEach(t => h += t.position);";
-  html += "        if(d.signal_state) h += d.signal_state.aspect;";
-  html += "        if(lastHash && lastHash !== h) updateDeviceTable(d);";
-  html += "        lastHash = h;";
-  html += "    }).catch(() => {});";
-  html += "}";
-  html += "";
-  html += "function updateDeviceTable(data) {";
-  html += "    console.log('Updating device table with new data');";
-  html += "    const table = document.getElementById('device-table-body');";
-  html += "    if (!table) {";
-  html += "        console.log('Device table not found, doing full reload');";
-  html += "        location.reload();";
-  html += "        return;";
-  html += "    }";
-  html += "    let tableHtml = '';";
-  html += "    if(data.sensor_states) {";
-  html += "        data.sensor_states.forEach((sensor, i) => {";
-  html += "            tableHtml += '<tr><td>Sensor</td><td>' + (i+1) + '</td>';";
-  html += "            tableHtml += '<td>' + sensor.state + '</td>';";
-  html += "            tableHtml += '<td><em>Read-only</em></td></tr>';";
-  html += "        });";
-  html += "    }";
-  html += "    if(data.turnout_states) {";
-  html += "        data.turnout_states.forEach((turnout, i) => {";
-  html += "            const state = turnout.position;";
-  html += "            const isThrown = (state === 'THROWN');";
-  html += "            tableHtml += '<tr><td>Turnout</td><td>' + (i+1) + '</td>';";
-  html += "            tableHtml += '<td>' + state + '</td><td>';";
-              html += "            tableHtml += '<button onclick=\"controlDevice(event,\\'turnout\\',' + (i+1) + ',\\'THROWN\\')\" class=\"control-btn ' + (isThrown ? 'btn-active' : 'btn-inactive') + '\">THROWN</button> ';";
-            html += "            tableHtml += '<button onclick=\"controlDevice(event,\\'turnout\\',' + (i+1) + ',\\'CLOSED\\')\" class=\"control-btn ' + (!isThrown ? 'btn-active' : 'btn-inactive') + '\">CLOSED</button>';";
-  html += "            tableHtml += '</td></tr>';";
-  html += "        });";
-  html += "    }";
-  html += "    if(data.signal_state) {";
-  html += "        const sigState = data.signal_state.aspect;";
-  html += "        const stateNum = (sigState === 'RED') ? 0 : (sigState === 'YELLOW') ? 1 : 2;";
-  html += "        tableHtml += '<tr><td>Signal</td><td>1</td>';";
-  html += "        tableHtml += '<td>' + sigState + '</td><td>';";
-          html += "        tableHtml += '<button onclick=\"controlDevice(event,\\'signal\\',1,\\'RED\\')\" class=\"control-btn ' + (stateNum === 0 ? 'btn-red-active' : 'btn-red') + '\">RED</button> ';";
-        html += "        tableHtml += '<button onclick=\"controlDevice(event,\\'signal\\',1,\\'YELLOW\\')\" class=\"control-btn ' + (stateNum === 1 ? 'btn-yellow-active' : 'btn-yellow') + '\">YELLOW</button> ';";
-        html += "        tableHtml += '<button onclick=\"controlDevice(event,\\'signal\\',1,\\'GREEN\\')\" class=\"control-btn ' + (stateNum === 2 ? 'btn-green-active' : 'btn-green') + '\">GREEN</button>';";
-  html += "        tableHtml += '</td></tr>';";
-  html += "    }";
-  html += "    table.innerHTML = tableHtml;";
-  html += "}";
-  html += "setInterval(checkChanges, 3000);";
-  html += "setTimeout(checkChanges, 1000);";
-  
-  // Firmware upload functions
-  html += "function validateFile(input) {";
-  html += "    const file = input.files[0];";
-  html += "    const uploadBtn = document.getElementById('uploadBtn');";
-  html += "    const statusDiv = document.getElementById('uploadStatus');";
-  html += "    if (file && file.name.endsWith('.bin')) {";
-  html += "        uploadBtn.disabled = false;";
-  html += "        statusDiv.innerHTML = '<div style=\"color:var(--success);padding:10px;border-radius:4px;background:var(--bg-secondary);\">File selected: ' + file.name + ' (' + (file.size/1024).toFixed(1) + ' KB)</div>';";
-  html += "    } else {";
-  html += "        uploadBtn.disabled = true;";
-  html += "        statusDiv.innerHTML = '<div style=\"color:var(--danger);padding:10px;border-radius:4px;background:var(--bg-secondary);\">Please select a .bin file</div>';";
-  html += "    }";
-  html += "}";
-  
-  html += "let currentUpload = null;";
-  html += "let versionPolling = false;";
-  
-  html += "function uploadFirmware() {";
-  html += "    const fileInput = document.getElementById('firmware');";
-  html += "    const file = fileInput.files[0];";
-  html += "    const uploadBtn = document.getElementById('uploadBtn');";
-  html += "    const cancelBtn = document.getElementById('cancelBtn');";
-  html += "    const progressBar = document.getElementById('progressBar');";
-  html += "    const statusDiv = document.getElementById('uploadStatus');";
-  html += "    if (!file) return;";
-  html += "    if (currentUpload || versionPolling) {";
-  html += "        console.log('Upload already in progress, ignoring...');";
-  html += "        return;";
-  html += "    }";
-  html += "    uploadBtn.disabled = true;";
-  html += "    cancelBtn.disabled = false;";
-  html += "    progressBar.style.width = '0%';";
-  html += "    versionPolling = false;";
-  html += "    statusDiv.innerHTML = '<div style=\"color:var(--info);padding:10px;border-radius:4px;background:var(--bg-secondary);\">Preparing upload...</div>';";
-  html += "    const formData = new FormData();";
-  html += "    formData.append('firmware', file);";
-  html += "    const xhr = new XMLHttpRequest();";
-  html += "    currentUpload = xhr;";
-    html += "    xhr.upload.addEventListener('progress', function(e) {";
-  html += "        if (e.lengthComputable) {";
-  html += "            const percentComplete = (e.loaded / e.total) * 100;";
-  html += "            progressBar.style.width = percentComplete + '%';";
-  html += "            statusDiv.innerHTML = '<div style=\"color:var(--info);padding:10px;border-radius:4px;background:var(--bg-secondary);\">Uploading: ' + Math.round(percentComplete) + '%</div>';";
-  html += "        }";
-  html += "    });";
-  html += "    xhr.addEventListener('load', function() {";
-  html += "        currentUpload = null;";
-  html += "        cancelBtn.disabled = true;";
-  html += "        if (xhr.status === 200) {";
-  html += "            console.log('Upload completed successfully');";
-  html += "            statusDiv.innerHTML = '<div style=\"color:var(--success);padding:10px;border-radius:4px;background:var(--bg-secondary);\">Upload completed! Device rebooting... Checking for new version...</div>';";
-  html += "            progressBar.style.width = '100%';";
-  html += "            startVersionPolling();";
-  html += "        } else {";
-  html += "            console.log('Upload response error, status:', xhr.status);";
-  html += "            statusDiv.innerHTML = '<div style=\"color:var(--warning);padding:10px;border-radius:4px;background:var(--bg-secondary);\">Upload may have completed (connection reset). Checking for new version...</div>';";
-  html += "            progressBar.style.width = '100%';";
-  html += "            startVersionPolling();";
-  html += "        }";
-  html += "    });";
-  html += "    xhr.addEventListener('error', function() {";
-  html += "        currentUpload = null;";
-  html += "        cancelBtn.disabled = true;";
-  html += "        console.log('Upload network error (likely device reboot)');";
-  html += "        statusDiv.innerHTML = '<div style=\"color:var(--warning);padding:10px;border-radius:4px;background:var(--bg-secondary);\">Upload completed (connection reset). Device rebooting... Checking for new version...</div>';";
-  html += "        progressBar.style.width = '100%';";
-  html += "        startVersionPolling();";
-  html += "    });";
-  html += "    xhr.open('POST', '/doUpdate');";
-  html += "    xhr.send(formData);";
-  html += "}";
-  
-  html += "function cancelUpload() {";
-  html += "    if (currentUpload) {";
-  html += "        currentUpload.abort();";
-  html += "        currentUpload = null;";
-  html += "        const uploadBtn = document.getElementById('uploadBtn');";
-  html += "        const cancelBtn = document.getElementById('cancelBtn');";
-  html += "        const progressBar = document.getElementById('progressBar');";
-  html += "        const statusDiv = document.getElementById('uploadStatus');";
-  html += "        uploadBtn.disabled = false;";
-  html += "        cancelBtn.disabled = true;";
-  html += "        progressBar.style.width = '0%';";
-  html += "        statusDiv.innerHTML = '<div style=\"color:var(--warning);padding:10px;border-radius:4px;background:var(--bg-secondary);\">Upload cancelled</div>';";
-  html += "    }";
-  html += "}";
-  
-  html += "function restartDevice() {";
-  html += "    if (confirm('Are you sure you want to restart the device?')) {";
-  html += "        fetch('/restart', { method: 'POST' })";
-  html += "        .then(() => {";
-  html += "            alert('Device is restarting... Please wait a moment and refresh the page.');";
-  html += "            setTimeout(() => location.reload(), 10000);";
-  html += "        })";
-  html += "        .catch(error => alert('Restart request failed: ' + error));";
-  html += "    }";
-  html += "}";
-  html += "";
-  html += "function resetSavedVariables() {";
-  html += "    if (confirm('WARNING: This will delete ALL saved settings (WiFi, MQTT, etc.) and restart with defaults. Are you sure?')) {";
-  html += "        if (confirm('This action cannot be undone. The device will lose all configuration. Continue?')) {";
-  html += "            fetch('/reset', { method: 'POST' })";
-  html += "            .then(() => {";
-  html += "                alert('All saved variables cleared! Device is restarting with default settings. You may need to reconfigure WiFi.');";
-  html += "                setTimeout(() => location.reload(), 15000);";
-  html += "            })";
-  html += "            .catch(error => alert('Reset request failed: ' + error));";
-  html += "        }";
-  html += "    }";
-  html += "}";
-  
-  html += "function validateConfigFile(input) {";
-  html += "    const file = input.files[0];";
-  html += "    const restoreBtn = document.getElementById('restoreBtn');";
-  html += "    if (file && file.name.endsWith('.json')) {";
-  html += "        restoreBtn.disabled = false;";
-  html += "    } else {";
-  html += "        restoreBtn.disabled = true;";
-  html += "        alert('Please select a valid backup file (.json)');";
-  html += "    }";
-  html += "}";
-  
-  html += "function restoreConfig() {";
-  html += "    const fileInput = document.getElementById('configFile');";
-  html += "    const file = fileInput.files[0];";
-  html += "    if (!file) return;";
-  html += "    if (!confirm('This will overwrite all current settings and restart the device. Continue?')) return;";
-  html += "    const formData = new FormData();";
-  html += "    formData.append('config', file);";
-  html += "    fetch('/restore', { method: 'POST', body: formData })";
-  html += "    .then(response => {";
-  html += "        if (response.ok) {";
-  html += "            alert('Configuration restored! Device is restarting...');";
-  html += "            setTimeout(() => location.reload(), 15000);";
-  html += "        } else {";
-  html += "            throw new Error('Restore failed');";
-  html += "        }";
-  html += "    })";
-  html += "    .catch(error => alert('Restore failed: ' + error));";
-  html += "}";
-  html += "";
-  html += "function controlDevice(event, type, number, action) {";
-  html += "    event.preventDefault();";
-  html += "    const formData = new FormData();";
-  html += "    formData.append('type', type);";
-  html += "    formData.append('number', number);";
-  html += "    formData.append('action', action);";
-  html += "    fetch('/control', { method: 'POST', body: formData })";
-  html += "    .then(response => {";
-  html += "        if (response.ok) {";
-  html += "            console.log(type + ' ' + number + ' set to ' + action);";
-  html += "            checkChanges();";
-  html += "        } else {";
-  html += "            console.error('Control request failed');";
-  html += "        }";
-  html += "    })";
-  html += "    .catch(error => console.error('Control request error:', error));";
-  html += "}";
-  
-  html += "function startVersionPolling() {";
-  html += "    if (versionPolling) return;";
-  html += "    versionPolling = true;";
-  html += "    console.log('Starting version polling - device is rebooting...');";
-  html += "    const statusDiv = document.getElementById('uploadStatus');";
-  html += "    let attempts = 0;";
-  html += "    const maxAttempts = 60;";
-  html += "    statusDiv.innerHTML = '<div style=\"color:var(--info);padding:10px;border-radius:4px;background:var(--bg-secondary);\">Network timed out during upload. Reestablishing connection...</div>';";
-  html += "    const pollInterval = setInterval(() => {";
-  html += "        attempts++;";
-  html += "        console.log('Polling attempt', attempts, '- Checking if device is back online...');";
-  html += "        statusDiv.innerHTML = '<div style=\"color:var(--info);padding:10px;border-radius:4px;background:var(--bg-secondary);\">Reestablishing connection... (attempt ' + attempts + '/' + maxAttempts + ')</div>';";
-  html += "        fetch('/status', { cache: 'no-cache' }).then(response => {";
-  html += "            if (response.ok) {";
-  html += "                return response.json();";
-  html += "            }";
-  html += "            throw new Error('Device not ready');";
-  html += "        }).then(data => {";
-  html += "            console.log('Device is back online! Full response:', data);";
-  html += "            console.log('Version field specifically:', data.version);";
-  html += "            clearInterval(pollInterval);";
-  html += "            versionPolling = false;";
-  html += "            const newVersion = data.version || data.firmware_version || Object.keys(data).find(k => k.includes('version')) ? data[Object.keys(data).find(k => k.includes('version'))] : 'Debug: ' + JSON.stringify(Object.keys(data));";
-  html += "            statusDiv.innerHTML = '<div style=\"color:var(--success);padding:10px;border-radius:4px;background:var(--bg-secondary);\">Update successful! New firmware version: ' + newVersion + '</div>';";
-  html += "            const versionDisplay = document.getElementById('firmware-version');";
-  html += "            if (versionDisplay) {";
-  html += "                versionDisplay.textContent = 'Current Version: ' + newVersion;";
-  html += "                versionDisplay.style.color = 'var(--success)';";
-  html += "                versionDisplay.style.fontWeight = 'bold';";
-  html += "                console.log('Version display updated to:', newVersion);";
-  html += "                setTimeout(() => {";
-  html += "                    versionDisplay.style.color = 'var(--text-secondary)';";
-  html += "                    versionDisplay.style.fontWeight = 'normal';";
-  html += "                }, 3000);";
-  html += "            }";
-  html += "            uploadBtn.disabled = false;";
-  html += "        }).catch(error => {";
-  html += "            console.log('Attempt', attempts, '- Device not ready yet');";
-  html += "            if (attempts >= maxAttempts) {";
-  html += "                console.log('Max attempts reached, stopping polling');";
-  html += "                clearInterval(pollInterval);";
-  html += "                versionPolling = false;";
-  html += "                statusDiv.innerHTML = '<div style=\"color:var(--warning);padding:10px;border-radius:4px;background:var(--bg-secondary);\">Update may have completed. <button onclick=\"localStorage.setItem(\\'activeTab\\',\\'firmware\\');location.reload()\" style=\"margin-left:10px;padding:5px 10px;background:var(--accent-primary);color:white;border:none;border-radius:3px;cursor:pointer;\">Refresh to Firmware Tab</button></div>';";
-  html += "            }";
-  html += "        });";
-  html += "    }, 2000);";
-  html += "}";
-  
-
-  
-
-  
-  html += "</script>";
-  html += "</body></html>";
+  // Substitute placeholders with actual values
+  html.replace("CLIENT_ID_PLACEHOLDER", String(MQTT_CLIENT_ID));
+  html.replace("IP_ADDRESS_PLACEHOLDER", WiFi.localIP().toString());
+  html.replace("WIFI_STATUS_PLACEHOLDER", WiFi.status() == WL_CONNECTED ? 
+    "<span class=\"status-badge status-connected\">WiFi Connected</span>" : 
+    "<span class=\"status-badge status-disconnected\">WiFi Disconnected</span>");
+  html.replace("MQTT_BROKER_PLACEHOLDER", mqtt_broker_ip + ":" + String(mqtt_broker_port));
+  html.replace("MQTT_STATUS_PLACEHOLDER", mqtt_client.connected() ? 
+    "<span class=\"status-badge status-connected\">Connected</span>" : 
+    "<span class=\"status-badge status-disconnected\">Disconnected</span>");
+  html.replace("WIFI_SSID_PLACEHOLDER", wifi_ssid);
+  html.replace("WIFI_PASSWORD_PLACEHOLDER", wifi_password);
+  html.replace("MQTT_BROKER_PLACEHOLDER", mqtt_broker_ip);
+  html.replace("MQTT_PORT_PLACEHOLDER", String(mqtt_broker_port));
+  html.replace("MQTT_CLIENT_ID_PLACEHOLDER", String(MQTT_CLIENT_ID));
+  html.replace("MQTT_CHANNEL_NAME_PLACEHOLDER", mqtt_channel_name);
+  html.replace("MQTT_TOPIC_PREFIX_PLACEHOLDER", String(MQTT_TOPIC_PREFIX));
+  html.replace("FIRMWARE_VERSION_PLACEHOLDER", String(FIRMWARE_VERSION));
   
   web_server.send(200, "text/html", html);
+}
+
+// Handler for /devices endpoint - returns device table HTML
+void handleDevices() {
+  web_server.send(200, "text/html", getDeviceTableHTML());
+}
+
+// Handler for /config endpoint - returns current configuration as JSON
+void handleConfig() {
+  DynamicJsonDocument doc(512);
+  
+  doc["wifi_ssid"] = wifi_ssid;
+  doc["mqtt_broker"] = mqtt_broker_ip;
+  doc["mqtt_port"] = mqtt_broker_port;
+  doc["mqtt_client_id"] = String(MQTT_CLIENT_ID);
+  doc["mqtt_channel_name"] = mqtt_channel_name;
+  doc["mqtt_topic_prefix"] = String(MQTT_TOPIC_PREFIX);
+  
+  String response;
+  serializeJson(doc, response);
+  web_server.send(200, "application/json", response);
 }
 
 void handleWiFiConfig() {
