@@ -1088,23 +1088,25 @@ void publishInitialStatus() {
 void handleRoot() {
   String html = getMainPageHTML();
   
-  // Substitute placeholders with actual values
-  html.replace("CLIENT_ID_PLACEHOLDER", String(MQTT_CLIENT_ID));
+  // Substitute placeholders with actual values for display
+  html.replace("CLIENT_ID_PLACEHOLDER", preferences.getString("mqtt_client_id", MQTT_CLIENT_ID));
   html.replace("IP_ADDRESS_PLACEHOLDER", WiFi.localIP().toString());
   html.replace("WIFI_STATUS_PLACEHOLDER", WiFi.status() == WL_CONNECTED ? 
     "<span class=\"status-badge status-connected\">WiFi Connected</span>" : 
     "<span class=\"status-badge status-disconnected\">WiFi Disconnected</span>");
-  html.replace("MQTT_BROKER_PLACEHOLDER", mqtt_broker_ip + ":" + String(mqtt_broker_port));
   html.replace("MQTT_STATUS_PLACEHOLDER", mqtt_client.connected() ? 
     "<span class=\"status-badge status-connected\">Connected</span>" : 
     "<span class=\"status-badge status-disconnected\">Disconnected</span>");
+  
+  // Replace form field placeholders with actual saved values from preferences
+  // This ensures the form shows current saved settings, not default config values
   html.replace("WIFI_SSID_PLACEHOLDER", wifi_ssid);
   html.replace("WIFI_PASSWORD_PLACEHOLDER", wifi_password);
   html.replace("MQTT_BROKER_PLACEHOLDER", mqtt_broker_ip);
   html.replace("MQTT_PORT_PLACEHOLDER", String(mqtt_broker_port));
-  html.replace("MQTT_CLIENT_ID_PLACEHOLDER", String(MQTT_CLIENT_ID));
-  html.replace("MQTT_CHANNEL_NAME_PLACEHOLDER", mqtt_channel_name);
-  html.replace("MQTT_TOPIC_PREFIX_PLACEHOLDER", String(MQTT_TOPIC_PREFIX));
+  html.replace("MQTT_CLIENT_ID_PLACEHOLDER", preferences.getString("mqtt_client_id", MQTT_CLIENT_ID));
+  html.replace("MQTT_CHANNEL_NAME_PLACEHOLDER", preferences.getString("mqtt_channel_name", MQTT_CHANNEL_NAME));
+  html.replace("MQTT_TOPIC_PREFIX_PLACEHOLDER", preferences.getString("mqtt_topic_prefix", MQTT_TOPIC_PREFIX));
   html.replace("FIRMWARE_VERSION_PLACEHOLDER", String(FIRMWARE_VERSION));
   
   web_server.send(200, "text/html", html);
@@ -1120,11 +1122,12 @@ void handleConfig() {
   DynamicJsonDocument doc(512);
   
   doc["wifi_ssid"] = wifi_ssid;
+  doc["wifi_password"] = wifi_password;
   doc["mqtt_broker"] = mqtt_broker_ip;
   doc["mqtt_port"] = mqtt_broker_port;
-  doc["mqtt_client_id"] = String(MQTT_CLIENT_ID);
-  doc["mqtt_channel_name"] = mqtt_channel_name;
-  doc["mqtt_topic_prefix"] = String(MQTT_TOPIC_PREFIX);
+  doc["mqtt_client_id"] = preferences.getString("mqtt_client_id", MQTT_CLIENT_ID);
+  doc["mqtt_channel_name"] = preferences.getString("mqtt_channel_name", MQTT_CHANNEL_NAME);
+  doc["mqtt_topic_prefix"] = preferences.getString("mqtt_topic_prefix", MQTT_TOPIC_PREFIX);
   
   String response;
   serializeJson(doc, response);
