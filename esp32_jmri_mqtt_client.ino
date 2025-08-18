@@ -50,8 +50,7 @@ String getUniqueId() {
 String mqtt_base_topic = String(MQTT_TOPIC_PREFIX) + "/";
 String mqtt_sensor_topic = mqtt_base_topic + "sensor/";
 String mqtt_turnout_topic = mqtt_base_topic + "turnout/";
-String mqtt_signal_topic = mqtt_base_topic + "signal/";
-String mqtt_light_topic = mqtt_base_topic + "light/";
+String mqtt_light_topic = mqtt_base_topic + "light/";  // Changed from signal to light
 String mqtt_status_topic = mqtt_base_topic + "status/";
 
 // Global objects
@@ -95,14 +94,16 @@ unsigned long last_mqtt_attempt = 0;
 // Removed periodic status publishing - only publish on state changes
 
 // Sensor states
-bool sensor_states[4] = {false, false, false, false};
+bool sensor_states[4] = {false, false, false, false};  // Changed from 3 to 4 sensors
 bool last_sensor_states[4] = {false, false, false, false};
 
 // Turnout states
-bool turnout_states[2] = {false, false};
+bool turnout_states[2] = {false, false};  // false = CLOSED, true = THROWN
+bool last_turnout_states[2] = {false, false};
 
-// Signal states
-int signal_state = 0; // 0=red, 1=yellow, 2=green
+// Global state variables for lights (6 individual lights)
+bool light_states[6] = {false, false, false, false, false, false};  // 6 individual lights
+bool last_light_states[6] = {false, false, false, false, false, false};
 
 void displaySystemInfo() {
   Serial.println("=== System Information ===");
@@ -165,7 +166,7 @@ void setup() {
   displaySystemInfo();
   
   // Initialize pins
-  initializePins();
+  setupPins();
   
   // Initialize SPIFFS
   if (!SPIFFS.begin(true)) {
@@ -256,30 +257,43 @@ void loop() {
   delay(10);
 }
 
-void initializePins() {
-  // Sensor pins (input with pull-up)
+void setupPins() {
+  // Configure turnout pins as outputs
+  pinMode(TURNOUT_PIN_1, OUTPUT);
+  pinMode(TURNOUT_PIN_2, OUTPUT);
+  
+  // Configure individual light pins as outputs
+  pinMode(LIGHT_PIN_1, OUTPUT);
+  pinMode(LIGHT_PIN_2, OUTPUT);
+  pinMode(LIGHT_PIN_3, OUTPUT);
+  pinMode(LIGHT_PIN_4, OUTPUT);
+  pinMode(LIGHT_PIN_5, OUTPUT);
+  pinMode(LIGHT_PIN_6, OUTPUT);
+  
+  // Configure sensor pins as inputs with pull-up resistors
   pinMode(SENSOR_PIN_1, INPUT_PULLUP);
   pinMode(SENSOR_PIN_2, INPUT_PULLUP);
   pinMode(SENSOR_PIN_3, INPUT_PULLUP);
   pinMode(SENSOR_PIN_4, INPUT_PULLUP);
   
-  // Turnout pins (output)
-  pinMode(TURNOUT_PIN_1, OUTPUT);
-  pinMode(TURNOUT_PIN_2, OUTPUT);
-  digitalWrite(TURNOUT_PIN_1, LOW);
-  digitalWrite(TURNOUT_PIN_2, LOW);
-  
-  // Signal pins (output)
-  pinMode(SIGNAL_PIN_RED, OUTPUT);
-  pinMode(SIGNAL_PIN_YELLOW, OUTPUT);
-  pinMode(SIGNAL_PIN_GREEN, OUTPUT);
-  digitalWrite(SIGNAL_PIN_RED, HIGH);   // Start with red
-  digitalWrite(SIGNAL_PIN_YELLOW, LOW);
-  digitalWrite(SIGNAL_PIN_GREEN, LOW);
-  
-  // Status LED
+  // Configure status LED
   pinMode(STATUS_LED, OUTPUT);
-  digitalWrite(STATUS_LED, LOW);
+  
+  // Set initial states
+  digitalWrite(TURNOUT_PIN_1, LOW);   // CLOSED
+  digitalWrite(TURNOUT_PIN_2, LOW);   // CLOSED
+  
+  // Set all lights to OFF initially
+  digitalWrite(LIGHT_PIN_1, LOW);
+  digitalWrite(LIGHT_PIN_2, LOW);
+  digitalWrite(LIGHT_PIN_3, LOW);
+  digitalWrite(LIGHT_PIN_4, LOW);
+  digitalWrite(LIGHT_PIN_5, LOW);
+  digitalWrite(LIGHT_PIN_6, LOW);
+  
+  digitalWrite(STATUS_LED, HIGH);  // Status LED ON
+  
+  Serial.println("Pins configured for 2 turnouts, 6 individual lights, and 4 sensors");
 }
 
 void loadWiFiCredentials() {
@@ -324,7 +338,6 @@ void loadMQTTCredentials() {
   mqtt_base_topic = channel_prefix + String(topic_prefix) + "/";
   mqtt_sensor_topic = mqtt_base_topic + "sensor/";
   mqtt_turnout_topic = mqtt_base_topic + "turnout/";
-  mqtt_signal_topic = mqtt_base_topic + "signal/";
   mqtt_light_topic = mqtt_base_topic + "light/";
   mqtt_status_topic = mqtt_base_topic + "status/";
   
@@ -332,7 +345,7 @@ void loadMQTTCredentials() {
   Serial.println("  Base: " + mqtt_base_topic);
   Serial.println("  Sensors: " + mqtt_sensor_topic);
   Serial.println("  Turnouts: " + mqtt_turnout_topic);
-  Serial.println("  Signals: " + mqtt_signal_topic);
+  Serial.println("  Signals: " + mqtt_light_topic); // Changed from signal to light
   Serial.println("  Status: " + mqtt_status_topic);
   
   Serial.println("===============================");
@@ -425,7 +438,6 @@ void setupMQTT() {
   mqtt_base_topic = channel_prefix + String(MQTT_TOPIC_PREFIX) + "/";
   mqtt_sensor_topic = mqtt_base_topic + "sensor/";
   mqtt_turnout_topic = mqtt_base_topic + "turnout/";
-  mqtt_signal_topic = mqtt_base_topic + "signal/";
   mqtt_light_topic = mqtt_base_topic + "light/";
   mqtt_status_topic = mqtt_base_topic + "status/";
   
@@ -434,7 +446,7 @@ void setupMQTT() {
   Serial.println("  Base Topic: " + mqtt_base_topic);
   Serial.println("  Sensor Topic: " + mqtt_sensor_topic);
   Serial.println("  Turnout Topic: " + mqtt_turnout_topic);
-  Serial.println("  Signal Topic: " + mqtt_signal_topic);
+  Serial.println("  Signal Topic: " + mqtt_light_topic); // Changed from signal to light
   Serial.println("  Status Topic: " + mqtt_status_topic);
   Serial.println("===============================");
 }
@@ -449,7 +461,8 @@ void setupWebServer() {
   web_server.on("/restart", HTTP_POST, handleRestart);
   web_server.on("/reset", HTTP_POST, handleReset);
   web_server.on("/backup", HTTP_GET, handleBackup);
-  web_server.on("/restore", HTTP_POST, []() {}, handleRestore);
+  web_server.on("/restore", HTTP_POST, handleRestore);
+  web_server.on("/save_device_labels", HTTP_POST, handleSaveDeviceLabels);
   
   // Test endpoint for debugging
   web_server.on("/test", HTTP_GET, []() {
@@ -591,17 +604,17 @@ void mqttReconnect() {
     
     // Subscribe to control topics (not status topics to avoid feedback loops)
     String turnout_topic = mqtt_turnout_topic + "+";
-    String signal_topic = mqtt_signal_topic + "+";
     String sensor_topic = mqtt_sensor_topic + "+";
+    String light_topic = mqtt_light_topic + "+";
     
     Serial.println("Subscribing to turnout topic: " + turnout_topic);
     mqtt_client.subscribe(turnout_topic.c_str());
     
-    Serial.println("Subscribing to signal topic: " + signal_topic);
-    mqtt_client.subscribe(signal_topic.c_str());
-    
     Serial.println("Subscribing to sensor topic: " + sensor_topic);
     mqtt_client.subscribe(sensor_topic.c_str());
+    
+    Serial.println("Subscribing to light topic: " + light_topic);
+    mqtt_client.subscribe(light_topic.c_str());
     
     Serial.println("Subscriptions completed");
     
@@ -618,7 +631,8 @@ void mqttReconnect() {
     Serial.println("=== Current States After MQTT Sync ===");
     Serial.println("Turnout 1: " + String(turnout_states[0] ? "THROWN" : "CLOSED"));
     Serial.println("Turnout 2: " + String(turnout_states[1] ? "THROWN" : "CLOSED"));
-    Serial.println("Signal: " + String((signal_state == 0) ? "RED" : (signal_state == 1) ? "YELLOW" : "GREEN"));
+    Serial.println("Turnouts: " + String(turnout_states[0] ? "THROWN" : "CLOSED") + " / " + String(turnout_states[1] ? "THROWN" : "CLOSED"));
+    Serial.println("Lights: " + String(light_states[0] ? "ON" : "OFF") + " " + String(light_states[1] ? "ON" : "OFF") + " " + String(light_states[2] ? "ON" : "OFF") + " " + String(light_states[3] ? "ON" : "OFF") + " " + String(light_states[4] ? "ON" : "OFF") + " " + String(light_states[5] ? "ON" : "OFF"));
     Serial.println("=====================================");
     
     // Skip initial status publish - we now sync from retained messages
@@ -710,16 +724,19 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   
   Serial.println("================================");
   
-  // Handle turnout control - JMRI sends simple text commands
+  // Handle turnout control messages
   if (topic_str.indexOf("/turnout/") > 0) {
     Serial.println("🎯 Processing turnout control message");
     handleTurnoutControl(topic_str, payload_str);
   }
   
-  // Handle signal control - JMRI sends simple text commands
-  if (topic_str.indexOf("/signal/") > 0) {
-    Serial.println("🎯 Processing signal control message");
-    handleSignalControl(topic_str, payload_str);
+  // Handle light control messages
+  if (topic_str.indexOf("/light/") > 0) {
+    Serial.println("🎯 Processing light control message");
+    Serial.println("  Full topic: " + topic_str);
+    Serial.println("  Payload: " + payload_str);
+    Serial.println("  Topic contains '/light/': " + String(topic_str.indexOf("/light/")));
+    handleLightControl(topic_str, payload_str);
   }
   
   // Handle sensor truth verification - respond with actual state if different
@@ -728,7 +745,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     Serial.println("  Sensor topic detected: " + topic_str);
     Serial.println("  Payload: " + payload_str);
     Serial.println("  Current sensor states:");
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 4; i++) {  // Changed from 3 to 4 sensors
       Serial.println("    Sensor " + String(i+1) + ": " + String(sensor_states[i] ? "ACTIVE" : "INACTIVE"));
     }
     handleSensorVerification(topic_str, payload_str);
@@ -821,83 +838,92 @@ void handleTurnoutControl(String topic, String payload) {
   Serial.println("=====================");
 }
 
-void handleSignalControl(String topic, String payload) {
-  Serial.println("=== Signal Control ===");
+/*
+ * Handle light control messages from JMRI
+ * 
+ * RACE CONDITION PREVENTION:
+ * - Only change state and publish if it's actually different from current state
+ * - This prevents feedback loops where JMRI sends a command and we echo back unnecessarily
+ * - Uses the same pattern as turnout control for consistency
+ */
+void handleLightControl(String topic, String payload) {
+  Serial.println("=== Light Control ===");
   Serial.println("Topic: " + topic);
   Serial.println("Payload: " + payload);
   
-  bool state_changed = false;
+  // Extract light number from topic
+  // JMRI can send: /trains/track/light/1 or /trains/track/light/1/red
+  int lightNum = 0;
   
-  if (payload == "RED") {
-    Serial.println("Requested aspect: RED");
-    Serial.println("Current aspect: " + String(signal_state == 0 ? "RED" : signal_state == 1 ? "YELLOW" : "GREEN"));
-    
-    if (signal_state != 0) {
-      state_changed = true;
-      signal_state = 0;
-      digitalWrite(SIGNAL_PIN_RED, HIGH);
-      digitalWrite(SIGNAL_PIN_YELLOW, LOW);
-      digitalWrite(SIGNAL_PIN_GREEN, LOW);
-      Serial.println("Signal pin " + String(SIGNAL_PIN_RED) + " set to HIGH (RED)");
-      Serial.println("Signal pin " + String(SIGNAL_PIN_YELLOW) + " set to LOW");
-      Serial.println("Signal pin " + String(SIGNAL_PIN_GREEN) + " set to LOW");
-      Serial.println("✅ Signal changed to RED");
-    } else {
-      Serial.println("ℹ️ Signal already in RED state");
-    }
-    
-  } else if (payload == "YELLOW") {
-    Serial.println("Requested aspect: YELLOW");
-    Serial.println("Current aspect: " + String(signal_state == 0 ? "RED" : signal_state == 1 ? "YELLOW" : "GREEN"));
-    
-    if (signal_state != 1) {
-      state_changed = true;
-      signal_state = 1;
-      digitalWrite(SIGNAL_PIN_RED, LOW);
-      digitalWrite(SIGNAL_PIN_YELLOW, HIGH);
-      digitalWrite(SIGNAL_PIN_GREEN, LOW);
-      Serial.println("Signal pin " + String(SIGNAL_PIN_RED) + " set to LOW");
-      Serial.println("Signal pin " + String(SIGNAL_PIN_YELLOW) + " set to HIGH (YELLOW)");
-      Serial.println("Signal pin " + String(SIGNAL_PIN_GREEN) + " set to LOW");
-      Serial.println("✅ Signal changed to YELLOW");
-    } else {
-      Serial.println("ℹ️ Signal already in YELLOW state");
-    }
-    
-  } else if (payload == "GREEN") {
-    Serial.println("Requested aspect: GREEN");
-    Serial.println("Current aspect: " + String(signal_state == 0 ? "RED" : signal_state == 1 ? "YELLOW" : "GREEN"));
-    
-    if (signal_state != 2) {
-      state_changed = true;
-      signal_state = 2;
-      digitalWrite(SIGNAL_PIN_RED, LOW);
-      digitalWrite(SIGNAL_PIN_YELLOW, LOW);
-      digitalWrite(SIGNAL_PIN_GREEN, HIGH);
-      Serial.println("Signal pin " + String(SIGNAL_PIN_RED) + " set to LOW");
-      Serial.println("Signal pin " + String(SIGNAL_PIN_YELLOW) + " set to LOW");
-      Serial.println("Signal pin " + String(SIGNAL_PIN_GREEN) + " set to HIGH (GREEN)");
-      Serial.println("✅ Signal changed to GREEN");
-    } else {
-      Serial.println("ℹ️ Signal already in GREEN state");
-    }
-    
+  // Parse topic to get light number
+  int lastSlash = topic.lastIndexOf('/');
+  if (lastSlash > 0) {
+    String lastPart = topic.substring(lastSlash + 1);
+    lightNum = lastPart.toInt();
+    Serial.println("  Last slash position: " + String(lastSlash));
+    Serial.println("  Last part: '" + lastPart + "'");
+    Serial.println("  Parsed light number: " + String(lightNum));
   } else {
-    Serial.println("❌ Unknown aspect specified in signal control message: " + payload);
-    Serial.println("===================");
+    Serial.println("  ❌ No slash found in topic");
+  }
+  
+  Serial.println("Light Number: " + String(lightNum));
+  
+  // Validate light number (1-6)
+  if (lightNum < 1 || lightNum > 6) {
+    Serial.println("❌ Invalid light number: " + String(lightNum));
     return;
   }
   
-  // Don't publish when state changes due to MQTT commands
-  // JMRI already knows it sent the command, no need to echo back
-  if (state_changed) {
-    Serial.println("🔄 State changed due to MQTT command, but not publishing back to JMRI");
-    Serial.println("ℹ️ JMRI already knows it sent this command - no echo needed");
+  // Parse payload (JMRI sends "ON" or "OFF")
+  bool lightState = (payload == "ON");
+  Serial.println("  Payload: '" + payload + "' -> lightState: " + String(lightState ? "true" : "false"));
+  
+  // RACE CONDITION PREVENTION: Only change state and publish if it's actually different
+  // This prevents feedback loops where JMRI sends a command and we echo back unnecessarily
+  bool stateChanged = (light_states[lightNum - 1] != lightState);
+  Serial.println("  Current state: " + String(light_states[lightNum - 1] ? "ON" : "OFF"));
+  Serial.println("  Requested state: " + String(lightState ? "ON" : "OFF"));
+  Serial.println("  State will change: " + String(stateChanged ? "YES" : "NO"));
+  
+  if (stateChanged) {
+    // Control the appropriate light
+    light_states[lightNum - 1] = lightState;
+    Serial.println("  Updated light_states[" + String(lightNum - 1) + "] = " + String(lightState));
+    
+    // Set the physical pin
+    switch(lightNum) {
+      case 1:
+        digitalWrite(LIGHT_PIN_1, lightState ? HIGH : LOW);
+        break;
+      case 2:
+        digitalWrite(LIGHT_PIN_2, lightState ? HIGH : LOW);
+        break;
+      case 3:
+        digitalWrite(LIGHT_PIN_3, lightState ? HIGH : LOW);
+        break;
+      case 4:
+        digitalWrite(LIGHT_PIN_4, lightState ? HIGH : LOW);
+        break;
+      case 5:
+        digitalWrite(LIGHT_PIN_5, lightState ? HIGH : LOW);
+        break;
+      case 6:
+        digitalWrite(LIGHT_PIN_6, lightState ? HIGH : LOW);
+        break;
+    }
+    
+    Serial.println("Light " + String(lightNum) + " set to: " + String(lightState ? "ON" : "OFF"));
+    
+    // Only publish when state actually changes
+    Serial.println("🔄 State changed due to MQTT command, publishing back to JMRI");
+    publishLightStatus(lightNum, lightState);
   } else {
-    Serial.println("ℹ️ No state change, already in requested state");
+    Serial.println("ℹ️ Light " + String(lightNum) + " already in requested state - no change needed");
+    Serial.println("🔄 State unchanged, not publishing back to JMRI");
   }
   
-  Serial.println("===================");
+  Serial.println("=== Light Control Complete ===");
 }
 
 void handleSensorVerification(String topic, String payload) {
@@ -915,7 +941,7 @@ void handleSensorVerification(String topic, String payload) {
   }
   
   // Validate sensor number
-  if (sensor_num < 1 || sensor_num > 4) {
+  if (sensor_num < 1 || sensor_num > 4) {  // Changed from 3 to 4 sensors
     Serial.println("❌ Error: Invalid sensor number: " + String(sensor_num));
     Serial.println("=====================");
     return;
@@ -928,7 +954,17 @@ void handleSensorVerification(String topic, String payload) {
   Serial.println("Topic: " + topic);
   Serial.println("JMRI expects: " + payload);
   Serial.println("Actual physical state: " + actual_state);
-  Serial.println("Physical pin state: " + String(digitalRead(sensor_num == 1 ? SENSOR_PIN_1 : sensor_num == 2 ? SENSOR_PIN_2 : sensor_num == 3 ? SENSOR_PIN_3 : SENSOR_PIN_4)));
+  
+  // Get the correct pin for the sensor number
+  int pin_to_read;
+  switch(sensor_num) {
+    case 1: pin_to_read = SENSOR_PIN_1; break;
+    case 2: pin_to_read = SENSOR_PIN_2; break;
+    case 3: pin_to_read = SENSOR_PIN_3; break;
+    case 4: pin_to_read = SENSOR_PIN_4; break;
+    default: pin_to_read = SENSOR_PIN_1; break;
+  }
+  Serial.println("Physical pin state: " + String(digitalRead(pin_to_read)));
   
   // Only publish if JMRI's expectation differs from reality
   if (payload != actual_state) {
@@ -943,24 +979,21 @@ void handleSensorVerification(String topic, String payload) {
 }
 
 void handleSensors() {
-  // Read sensor states
-  sensor_states[0] = !digitalRead(SENSOR_PIN_1); // Inverted due to pull-up
+  // Read sensor states (inverted because of pull-up resistors)
+  sensor_states[0] = !digitalRead(SENSOR_PIN_1);
   sensor_states[1] = !digitalRead(SENSOR_PIN_2);
   sensor_states[2] = !digitalRead(SENSOR_PIN_3);
   sensor_states[3] = !digitalRead(SENSOR_PIN_4);
   
-  // Check for changes and publish updates
-  for (int i = 0; i < 4; i++) {
+  // Check for changes and publish if needed
+  for (int i = 0; i < 4; i++) {  // Changed from 3 to 4 sensors
     if (sensor_states[i] != last_sensor_states[i]) {
-      Serial.println("=== Sensor State Change ===");
-      Serial.println("Sensor " + String(i + 1) + " changed from " + 
-                    (last_sensor_states[i] ? "ACTIVE" : "INACTIVE") + 
-                    " to " + (sensor_states[i] ? "ACTIVE" : "INACTIVE"));
-      Serial.println("Pin: " + String(i == 0 ? SENSOR_PIN_1 : i == 1 ? SENSOR_PIN_2 : i == 2 ? SENSOR_PIN_3 : SENSOR_PIN_4));
-      Serial.println("==========================");
+      Serial.println("Sensor " + String(i + 1) + " state changed from " + 
+                    String(last_sensor_states[i] ? "ACTIVE" : "INACTIVE") + " to " + 
+                    String(sensor_states[i] ? "ACTIVE" : "INACTIVE"));
       
-      publishSensorStatus(i + 1);
       last_sensor_states[i] = sensor_states[i];
+      publishSensorStatus(i + 1);
     }
   }
 }
@@ -1000,19 +1033,19 @@ void publishTurnoutStatus(int turnout_num) {
   Serial.println("Published turnout " + String(turnout_num) + " status: " + position + " to topic: " + topic);
 }
 
-void publishSignalStatus() {
+void publishLightStatus(int lightNum, bool lightState) {
   if (!mqtt_connected) return;
   
-  // Publish to same topic as commands - filtering prevents feedback loops
-  String aspect = (signal_state == 0) ? "RED" : (signal_state == 1) ? "YELLOW" : "GREEN";
-  String topic = mqtt_signal_topic + "1";
+  // Publish to the JMRI light topic format: /trains/track/light/1
+  String topic = mqtt_light_topic + String(lightNum);
+  String state = lightState ? "ON" : "OFF";
   
   // Track this publication to prevent feedback loops
-  trackPublication(topic, aspect);
+  trackPublication(topic, state);
   
-  mqtt_client.publish(topic.c_str(), aspect.c_str(), true); // Retained message
+  mqtt_client.publish(topic.c_str(), state.c_str(), true); // Retained message
   
-  Serial.println("Published signal status: " + aspect + " to topic: " + topic);
+  Serial.println("Published light " + String(lightNum) + " status: " + state + " to topic: " + topic);
 }
 
 void publishInitialStatus() {
@@ -1022,7 +1055,7 @@ void publishInitialStatus() {
   Serial.println("🔍 DEBUG: publishInitialStatus() called");
   
   // Publish individual sensor statuses
-  for (int i = 1; i <= 4; i++) {
+  for (int i = 1; i <= 4; i++) {  // Changed from 3 to 4 sensors
     publishSensorStatus(i);
     delay(100);  // Small delay between publishes
   }
@@ -1034,8 +1067,14 @@ void publishInitialStatus() {
     delay(100);  // Small delay between publishes
   }
   
-  // Publish signal status
-  publishSignalStatus();
+  // Publish individual light statuses for all 6 lights
+  for (int i = 1; i <= 6; i++) {
+    // Only publish if light is ON to avoid triggering JMRI commands for OFF lights
+    if (light_states[i-1]) {
+      publishLightStatus(i, light_states[i-1]);
+      delay(100);
+    }
+  }
   
   Serial.println("=== Initial Device States Published to JMRI ===");
 }
@@ -1155,7 +1194,6 @@ void handleMQTTConfig() {
     mqtt_base_topic = channel_prefix + String(new_topic_prefix) + "/";
     mqtt_sensor_topic = mqtt_base_topic + "sensor/";
     mqtt_turnout_topic = mqtt_base_topic + "turnout/";
-    mqtt_signal_topic = mqtt_base_topic + "signal/";
     mqtt_light_topic = mqtt_base_topic + "light/";
     mqtt_status_topic = mqtt_base_topic + "status/";
 
@@ -1163,7 +1201,7 @@ void handleMQTTConfig() {
     Serial.println("  Base: " + mqtt_base_topic);
     Serial.println("  Sensors: " + mqtt_sensor_topic);
     Serial.println("  Turnouts: " + mqtt_turnout_topic);
-    Serial.println("  Signals: " + mqtt_signal_topic);
+    Serial.println("  Signals: " + mqtt_light_topic); // Changed from signal to light
     Serial.println("  Status: " + mqtt_status_topic);
 
     // Disconnect current MQTT connection
@@ -1180,17 +1218,17 @@ void handleMQTTConfig() {
       
       // Resubscribe to control topics
       String turnout_topic = mqtt_turnout_topic + "+";
-      String signal_topic = mqtt_signal_topic + "+";
       String sensor_topic = mqtt_sensor_topic + "+";
+      String light_topic = mqtt_light_topic + "+";
       
       Serial.println("Resubscribing to turnout topic: " + turnout_topic);
       mqtt_client.subscribe(turnout_topic.c_str());
       
-      Serial.println("Resubscribing to signal topic: " + signal_topic);
-      mqtt_client.subscribe(signal_topic.c_str());
-      
       Serial.println("Resubscribing to sensor topic: " + sensor_topic);
       mqtt_client.subscribe(sensor_topic.c_str());
+
+      Serial.println("Resubscribing to light topic: " + light_topic);
+      mqtt_client.subscribe(light_topic.c_str());
       
       // Skip republishing status on config changes - JMRI already knows current states
       Serial.println("Skipping status republish (no state changes)");
@@ -1209,83 +1247,128 @@ void handleMQTTConfig() {
 }
 
 void handleStatus() {
-  DynamicJsonDocument doc(512);
-  doc["device"] = DEVICE_NAME;
-  doc["version"] = FIRMWARE_VERSION;
-  doc["wifi_connected"] = (WiFi.status() == WL_CONNECTED);
-  doc["wifi_ssid"] = wifi_ssid;
-  doc["ip_address"] = WiFi.localIP().toString();
-  doc["mqtt_connected"] = mqtt_connected;
+  DynamicJsonDocument doc(1024);
   
-  // Add MQTT configuration info
-  doc["mqtt_broker"] = preferences.getString("mqtt_broker", MQTT_BROKER);
-  doc["mqtt_port"] = preferences.getInt("mqtt_port", MQTT_PORT);
-  doc["mqtt_client_id"] = preferences.getString("mqtt_client_id", MQTT_CLIENT_ID);
-  doc["mqtt_channel_name"] = preferences.getString("mqtt_channel_name", MQTT_CHANNEL_NAME);
-  doc["mqtt_topic_prefix"] = preferences.getString("mqtt_topic_prefix", MQTT_TOPIC_PREFIX);
-  
-  doc["uptime"] = millis();
-  
-  // Add current device states
-  JsonArray sensor_states_array = doc.createNestedArray("sensor_states");
-  for (int i = 0; i < 4; i++) {
-    JsonObject sensor = sensor_states_array.createNestedObject();
-    sensor["number"] = i + 1;
+  // Add sensor states
+  JsonArray sensorArray = doc.createNestedArray("sensor_states");
+  for (int i = 0; i < 4; i++) {  // Changed from 3 to 4 sensors
+    JsonObject sensor = sensorArray.createNestedObject();
+    sensor["sensor"] = i + 1;
     sensor["state"] = sensor_states[i] ? "ACTIVE" : "INACTIVE";
+    sensor["label"] = preferences.getString(("sensor_label_" + String(i + 1)).c_str(), ("Sensor " + String(i + 1)).c_str());
   }
   
-  JsonArray turnout_states_array = doc.createNestedArray("turnout_states");
+  // Add turnout states
+  JsonArray turnoutArray = doc.createNestedArray("turnout_states");
   for (int i = 0; i < 2; i++) {
-    JsonObject turnout = turnout_states_array.createNestedObject();
-    turnout["number"] = i + 1;
+    JsonObject turnout = turnoutArray.createNestedObject();
+    turnout["turnout"] = i + 1;
     turnout["position"] = turnout_states[i] ? "THROWN" : "CLOSED";
+    turnout["label"] = preferences.getString(("turnout_label_" + String(i + 1)).c_str(), ("Turnout " + String(i + 1)).c_str());
   }
   
-  JsonObject signal = doc.createNestedObject("signal_state");
-  signal["number"] = 1;
-  signal["aspect"] = (signal_state == 0) ? "RED" : (signal_state == 1) ? "YELLOW" : "GREEN";
+  // Add individual light states
+  JsonArray lightArray = doc.createNestedArray("lights");
+  for (int i = 0; i < 6; i++) {
+    JsonObject light = lightArray.createNestedObject();
+    light["light"] = i + 1;
+    light["state"] = light_states[i] ? "ON" : "OFF";
+    light["label"] = preferences.getString(("light_label_" + String(i + 1)).c_str(), ("Light " + String(i + 1)).c_str());
+  }
   
-  String json_string;
-  serializeJsonPretty(doc, json_string);  // Use pretty formatting
+  // Add system info
+  doc["version"] = FIRMWARE_VERSION;
+  doc["mqtt_connected"] = mqtt_connected;
+  doc["wifi_connected"] = WiFi.status() == WL_CONNECTED;
   
-  web_server.send(200, "application/json", json_string);
+  String response;
+  serializeJson(doc, response);
+  web_server.send(200, "application/json", response);
 }
 
 void handleDeviceControl() {
-  // Check for required parameters
   if (!web_server.hasArg("type") || !web_server.hasArg("number") || !web_server.hasArg("action")) {
     web_server.send(400, "text/plain", "Missing required parameters");
     return;
   }
-
+  
   String type = web_server.arg("type");
   int number = web_server.arg("number").toInt();
   String action = web_server.arg("action");
-
+  
+  Serial.println("=== Device Control Request ===");
+  Serial.println("Type: " + type);
+  Serial.println("Number: " + String(number));
+  Serial.println("Action: " + action);
+  
   if (type == "turnout") {
-    if (number >= 1 && number <= 2) {
-      bool new_state = (action == "THROWN");
-      if (number == 1) {
-        digitalWrite(TURNOUT_PIN_1, new_state ? HIGH : LOW);
-        turnout_states[0] = new_state;
-      } else {
-        digitalWrite(TURNOUT_PIN_2, new_state ? HIGH : LOW);
-        turnout_states[1] = new_state;
-      }
-      publishTurnoutStatus(number);
+    if (number < 1 || number > 2) {
+      web_server.send(400, "text/plain", "Invalid turnout number");
+      return;
     }
-  } else if (type == "signal" && number == 1) {
-    int new_state = (action == "RED") ? 0 : (action == "YELLOW") ? 1 : 2;
-    signal_state = new_state;
-    digitalWrite(SIGNAL_PIN_RED, (new_state == 0) ? HIGH : LOW);
-    digitalWrite(SIGNAL_PIN_YELLOW, (new_state == 1) ? HIGH : LOW);
-    digitalWrite(SIGNAL_PIN_GREEN, (new_state == 2) ? HIGH : LOW);
-    publishSignalStatus();
+    
+    if (action == "THROWN") {
+      turnout_states[number - 1] = true;
+      digitalWrite(number == 1 ? TURNOUT_PIN_1 : TURNOUT_PIN_2, HIGH);
+      Serial.println("Turnout " + String(number) + " set to THROWN");
+    } else if (action == "CLOSED") {
+      turnout_states[number - 1] = false;
+      digitalWrite(number == 1 ? TURNOUT_PIN_1 : TURNOUT_PIN_2, LOW);
+      Serial.println("Turnout " + String(number) + " set to CLOSED");
+    } else {
+      web_server.send(400, "text/plain", "Invalid turnout action");
+      return;
+    }
+    
+    // Publish status to JMRI
+    publishTurnoutStatus(number);
+    
+  } else if (type == "light") {
+    // Handle light control for signal heads
+    if (number < 1 || number > 6) {
+      web_server.send(400, "text/plain", "Invalid light number");
+      return;
+    }
+    
+    // Toggle the light state
+    bool newState = false;
+    if (number == 1) {
+      light_states[0] = !light_states[0];
+      newState = light_states[0];
+      digitalWrite(LIGHT_PIN_1, newState ? HIGH : LOW);
+    } else if (number == 2) {
+      light_states[1] = !light_states[1];
+      newState = light_states[1];
+      digitalWrite(LIGHT_PIN_2, newState ? HIGH : LOW);
+    } else if (number == 3) {
+      light_states[2] = !light_states[2];
+      newState = light_states[2];
+      digitalWrite(LIGHT_PIN_3, newState ? HIGH : LOW);
+    } else if (number == 4) {
+      light_states[3] = !light_states[3];
+      newState = light_states[3];
+      digitalWrite(LIGHT_PIN_4, newState ? HIGH : LOW);
+    } else if (number == 5) {
+      light_states[4] = !light_states[4];
+      newState = light_states[4];
+      digitalWrite(LIGHT_PIN_5, newState ? HIGH : LOW);
+    } else if (number == 6) {
+      light_states[5] = !light_states[5];
+      newState = light_states[5];
+      digitalWrite(LIGHT_PIN_6, newState ? HIGH : LOW);
+    }
+    
+    Serial.println("Light " + String(number) + " toggled to " + (newState ? "ON" : "OFF"));
+    
+    // Publish status to JMRI
+    publishLightStatus(number, newState);
+    
+  } else {
+    web_server.send(400, "text/plain", "Invalid device type");
+    return;
   }
   
-  // Redirect back to main page
-  web_server.sendHeader("Location", "/");
-  web_server.send(302, "text/plain", "Redirecting...");
+  web_server.send(200, "text/plain", "Device control successful");
 }
 
 void handleRestart() {
@@ -1463,6 +1546,27 @@ void handleBackup() {
   doc["device_name"] = DEVICE_NAME;
   doc["firmware_version"] = FIRMWARE_VERSION;
   
+  // Add device labels (sensors, turnouts, and lights)
+  JsonObject device_labels = doc.createNestedObject("device_labels");
+  
+  // Sensor labels
+  device_labels["sensor_1"] = preferences.getString("sensor_label_1", "Sensor 1");
+  device_labels["sensor_2"] = preferences.getString("sensor_label_2", "Sensor 2");
+  device_labels["sensor_3"] = preferences.getString("sensor_label_3", "Sensor 3");
+  device_labels["sensor_4"] = preferences.getString("sensor_label_4", "Sensor 4");
+  
+  // Turnout labels
+  device_labels["turnout_1"] = preferences.getString("turnout_label_1", "Turnout 1");
+  device_labels["turnout_2"] = preferences.getString("turnout_label_2", "Turnout 2");
+  
+  // Light labels
+  device_labels["light_1"] = preferences.getString("light_label_1", "Light 1");
+  device_labels["light_2"] = preferences.getString("light_label_2", "Light 2");
+  device_labels["light_3"] = preferences.getString("light_label_3", "Light 3");
+  device_labels["light_4"] = preferences.getString("light_label_4", "Light 4");
+  device_labels["light_5"] = preferences.getString("light_label_5", "Light 5");
+  device_labels["light_6"] = preferences.getString("light_label_6", "Light 6");
+  
   // Add timestamp
   doc["backup_timestamp"] = String(millis());
   
@@ -1517,10 +1621,67 @@ void handleRestore() {
     if (doc.containsKey("mqtt_topic_prefix")) {
       preferences.putString("mqtt_topic_prefix", doc["mqtt_topic_prefix"].as<String>());
     }
+    
+    // Restore device labels
+    if (doc.containsKey("device_labels")) {
+      JsonObject device_labels = doc["device_labels"];
+      
+      // Restore sensor labels
+      if (device_labels.containsKey("sensor_1")) preferences.putString("sensor_label_1", device_labels["sensor_1"].as<String>());
+      if (device_labels.containsKey("sensor_2")) preferences.putString("sensor_label_2", device_labels["sensor_2"].as<String>());
+      if (device_labels.containsKey("sensor_3")) preferences.putString("sensor_label_3", device_labels["sensor_3"].as<String>());
+      if (device_labels.containsKey("sensor_4")) preferences.putString("sensor_label_4", device_labels["sensor_4"].as<String>());
+      
+      // Restore turnout labels
+      if (device_labels.containsKey("turnout_1")) preferences.putString("turnout_label_1", device_labels["turnout_1"].as<String>());
+      if (device_labels.containsKey("turnout_2")) preferences.putString("turnout_label_2", device_labels["turnout_2"].as<String>());
+      
+      // Restore light labels
+      if (device_labels.containsKey("light_1")) preferences.putString("light_label_1", device_labels["light_1"].as<String>());
+      if (device_labels.containsKey("light_2")) preferences.putString("light_label_2", device_labels["light_2"].as<String>());
+      if (device_labels.containsKey("light_3")) preferences.putString("light_label_3", device_labels["light_3"].as<String>());
+      if (device_labels.containsKey("light_4")) preferences.putString("light_label_4", device_labels["light_4"].as<String>());
+      if (device_labels.containsKey("light_5")) preferences.putString("light_label_5", device_labels["light_5"].as<String>());
+      if (device_labels.containsKey("light_6")) preferences.putString("light_label_6", device_labels["light_6"].as<String>());
+    }
   } else if (upload.status == UPLOAD_FILE_END) {
     Serial.println("Config restore complete");
     web_server.send(200, "text/plain", "Configuration restored. Device will restart...");
     delay(1000);
     ESP.restart();
+  }
+}
+
+void handleSaveDeviceLabels() {
+  if (web_server.hasArg("device_labels")) {
+    String labelsJson = web_server.arg("device_labels");
+    DynamicJsonDocument doc(1024);
+    DeserializationError error = deserializeJson(doc, labelsJson);
+
+    if (error) {
+      Serial.println("Failed to parse device labels JSON");
+      web_server.send(400, "text/plain", "Invalid device labels JSON");
+      return;
+    }
+
+    // Save to preferences
+    JsonObject device_labels = doc["device_labels"];
+    if (device_labels.containsKey("sensor_1")) preferences.putString("sensor_label_1", device_labels["sensor_1"].as<String>());
+    if (device_labels.containsKey("sensor_2")) preferences.putString("sensor_label_2", device_labels["sensor_2"].as<String>());
+    if (device_labels.containsKey("sensor_3")) preferences.putString("sensor_label_3", device_labels["sensor_3"].as<String>());
+    if (device_labels.containsKey("sensor_4")) preferences.putString("sensor_label_4", device_labels["sensor_4"].as<String>());
+    if (device_labels.containsKey("turnout_1")) preferences.putString("turnout_label_1", device_labels["turnout_1"].as<String>());
+    if (device_labels.containsKey("turnout_2")) preferences.putString("turnout_label_2", device_labels["turnout_2"].as<String>());
+    if (device_labels.containsKey("light_1")) preferences.putString("light_label_1", device_labels["light_1"].as<String>());
+    if (device_labels.containsKey("light_2")) preferences.putString("light_label_2", device_labels["light_2"].as<String>());
+    if (device_labels.containsKey("light_3")) preferences.putString("light_label_3", device_labels["light_3"].as<String>());
+    if (device_labels.containsKey("light_4")) preferences.putString("light_label_4", device_labels["light_4"].as<String>());
+    if (device_labels.containsKey("light_5")) preferences.putString("light_label_5", device_labels["light_5"].as<String>());
+    if (device_labels.containsKey("light_6")) preferences.putString("light_label_6", device_labels["light_6"].as<String>());
+
+    Serial.println("Device labels saved successfully.");
+    web_server.send(200, "text/plain", "Device labels saved successfully.");
+  } else {
+    web_server.send(400, "text/plain", "Missing device_labels argument");
   }
 }
