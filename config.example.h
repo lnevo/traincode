@@ -8,7 +8,7 @@
 #define CONFIG_H
 
 // Firmware version
-#define FIRMWARE_VERSION "3.6"
+#define FIRMWARE_VERSION "3.9.5"
 
 // Device configuration
 #define DEVICE_NAME "ESP32_JMRI_Client"

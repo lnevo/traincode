@@ -46,6 +46,39 @@ String getUniqueId() {
   return String(suffix);
 }
 
+// Function to get unique client ID from MAC address
+String getUniqueClientId() {
+  uint8_t mac[6];
+  WiFi.macAddress(mac);  // Get station MAC address for client ID
+  
+  // Create unique client ID: esp32_jmri_XXXX (where XXXX is last 4 digits of MAC)
+  char clientId[25];
+  snprintf(clientId, sizeof(clientId), "esp32_jmri_%02X%02X", mac[4], mac[5]);
+  Serial.printf("Generated unique client ID: %s\n", clientId);
+  
+  return String(clientId);
+}
+
+// Function to get unique hostname from MAC address
+String getUniqueHostname() {
+  uint8_t mac[6];
+  WiFi.macAddress(mac);  // Get station MAC address for hostname
+  
+  // Create unique hostname: esp32-jmri-XXXX (where XXXX is last 4 digits of MAC)
+  // Ensure only valid hostname characters (letters, numbers, hyphens)
+  char hostname[25];
+  snprintf(hostname, sizeof(hostname), "esp32-jmri-%02x%02x", mac[4], mac[5]);
+  
+  // Convert to lowercase for better compatibility
+  String result = String(hostname);
+  result.toLowerCase();
+  
+  Serial.printf("Generated unique hostname: %s\n", result.c_str());
+  Serial.printf("MAC bytes used: %02X:%02X\n", mac[4], mac[5]);
+  
+  return result;
+}
+
 // MQTT topics - Updated to match JMRI format
 String mqtt_base_topic = String(MQTT_TOPIC_PREFIX) + "/";
 String mqtt_sensor_topic = mqtt_base_topic + "sensor/";
@@ -109,6 +142,13 @@ void displaySystemInfo() {
   Serial.println("=== System Information ===");
   Serial.println("Device: " + String(DEVICE_NAME));
   Serial.println("Firmware Version: " + String(FIRMWARE_VERSION));
+  
+  // Show unique identifiers
+  String uniqueClientId = getUniqueClientId();
+  String uniqueHostname = getUniqueHostname();
+  Serial.println("Unique Client ID: " + uniqueClientId);
+  Serial.println("Unique Hostname: " + uniqueHostname + ".local");
+  
   Serial.println("Free Sketch Space: " + String(ESP.getFreeSketchSpace()) + " bytes");
   Serial.println("Free Heap: " + String(ESP.getFreeHeap()) + " bytes");
   Serial.println("Flash Chip Size: " + String(ESP.getFlashChipSize()) + " bytes");
@@ -156,10 +196,15 @@ void setup() {
   }
   Serial.println();
   
-  // Get unique ID and set SSID
+  // Generate unique identifiers
   String uniqueId = getUniqueId();
+  String uniqueClientId = getUniqueClientId();
+  String uniqueHostname = getUniqueHostname();
+  
   default_ssid = String(DEFAULT_SSID) + "_" + uniqueId;
   Serial.println("Device Unique ID: " + uniqueId);
+  Serial.println("Unique Client ID: " + uniqueClientId);
+  Serial.println("Unique Hostname: " + uniqueHostname);
   Serial.println("AP SSID will be: " + default_ssid);
   
   // Display system information
@@ -191,7 +236,7 @@ void setup() {
     Serial.println("WiFi connected, attempting MQTT connection...");
     
     // Now setup MQTT with the loaded credentials
-  setupMQTT();
+    setupMQTT();
     
     // Test broker connectivity before attempting connection
     testMQTTBrokerConnectivity();
@@ -211,6 +256,16 @@ void setup() {
   setupOTA();
   
   Serial.println("Setup complete!");
+  Serial.println("If WiFi connects, you can access this device at:");
+  Serial.println("  - IP Address: " + WiFi.localIP().toString());
+  
+  // Show the hostname that will be used for mDNS
+  String savedClientId = preferences.getString("mqtt_client_id", "");
+  if (savedClientId.length() > 0) {
+    Serial.println("  - Hostname: " + savedClientId + ".local");
+  } else {
+    Serial.println("  - Hostname: " + getUniqueHostname() + ".local (generated)");
+  }
 }
 
 void loop() {
@@ -311,17 +366,20 @@ void loadWiFiCredentials() {
 void loadMQTTCredentials() {
   Serial.println("=== Loading MQTT Credentials ===");
   
+  // Get unique client ID for default value
+  String uniqueClientId = getUniqueClientId();
+  
   // Load MQTT settings from preferences with defaults from config.h
   String broker = preferences.getString("mqtt_broker", MQTT_BROKER);
   int port = preferences.getInt("mqtt_port", MQTT_PORT);
-  String client_id = preferences.getString("mqtt_client_id", MQTT_CLIENT_ID);
+  String client_id = preferences.getString("mqtt_client_id", uniqueClientId);
   String channel_name = preferences.getString("mqtt_channel_name", MQTT_CHANNEL_NAME);
   String topic_prefix = preferences.getString("mqtt_topic_prefix", MQTT_TOPIC_PREFIX);
   
   Serial.println("Loaded configuration:");
   Serial.println("  Broker: " + broker + (broker == MQTT_BROKER ? " (default)" : " (saved)"));
   Serial.println("  Port: " + String(port) + (port == MQTT_PORT ? " (default)" : " (saved)"));
-  Serial.println("  Client ID: " + client_id + (client_id == MQTT_CLIENT_ID ? " (default)" : " (saved)"));
+  Serial.println("  Client ID: " + client_id + (client_id == uniqueClientId ? " (default)" : " (saved)"));
   Serial.println("  Channel Name: " + channel_name + (channel_name == MQTT_CHANNEL_NAME ? " (default)" : " (saved)"));
   Serial.println("  Topic Prefix: " + topic_prefix + (topic_prefix == MQTT_TOPIC_PREFIX ? " (default)" : " (saved)"));
   
@@ -377,6 +435,10 @@ void setupWiFi() {
       Serial.println("RSSI: " + String(WiFi.RSSI()) + " dBm");
       Serial.println("Channel: " + String(WiFi.channel()));
       digitalWrite(STATUS_LED, HIGH);
+      
+      // Start mDNS after WiFi connects
+      startMDNS();
+      
       Serial.println("=== WiFi Setup Complete ===");
     } else {
       Serial.println("\n❌ Failed to connect to saved WiFi");
@@ -402,10 +464,7 @@ void setupWiFi() {
 void setupMQTT() {
   Serial.println("=== Setting up MQTT ===");
   
-  // Initialize mDNS if not already done
-  if (!MDNS.begin("esp32-jmri-client")) {
-    Serial.println("Error setting up mDNS responder");
-  }
+  // Note: mDNS will be started after WiFi connects to ensure it works properly
   
   // If we have a hostname, try to resolve it
   if (mqtt_broker_hostname.length() > 0) {
@@ -469,6 +528,33 @@ void setupWebServer() {
     web_server.send(200, "text/plain", "Web server is working! Firmware version: " + String(FIRMWARE_VERSION));
   });
   
+  // mDNS test endpoint
+  web_server.on("/mdns-test", HTTP_GET, []() {
+    String response = "=== mDNS Test ===\n";
+    
+    // Get the actual hostname being used
+    String savedClientId = preferences.getString("mqtt_client_id", "");
+    String hostname;
+    if (savedClientId.length() > 0) {
+      hostname = savedClientId + ".local";
+      response += "Hostname: " + hostname + " (from saved client ID)\n";
+    } else {
+      hostname = getUniqueHostname() + ".local";
+      response += "Hostname: " + hostname + " (generated from MAC)\n";
+    }
+    
+    response += "IP Address: " + WiFi.localIP().toString() + "\n";
+    response += "WiFi Status: " + String(WiFi.status()) + "\n";
+    response += "mDNS should be running if WiFi is connected\n";
+    
+    // Test mDNS resolution
+    response += "\n=== Testing mDNS Resolution ===\n";
+    response += "Try accessing: http://" + hostname + "\n";
+    response += "Or use: nslookup " + hostname + "\n";
+    
+    web_server.send(200, "text/plain", response);
+  });
+  
   // OTA update page
 
   web_server.on("/doUpdate", HTTP_POST, handleDoUpdate, handleUpdateBody);
@@ -487,7 +573,21 @@ void setupWebServer() {
 void setupOTA() {
   Serial.println("Setting up OTA...");
   
-  ArduinoOTA.setHostname(DEVICE_NAME);
+  // Get the actual saved client ID for OTA hostname
+  String savedClientId = preferences.getString("mqtt_client_id", "");
+  String hostname;
+  
+  if (savedClientId.length() > 0) {
+    // Use the saved client ID as the hostname
+    hostname = savedClientId;
+    Serial.println("Using saved client ID for OTA hostname: " + hostname);
+  } else {
+    // Fallback to generated hostname if no saved client ID
+    hostname = getUniqueHostname();
+    Serial.println("No saved client ID, using generated hostname for OTA: " + hostname);
+  }
+  
+  ArduinoOTA.setHostname(hostname.c_str());
   ArduinoOTA.setPassword("admin");
   
   // Set OTA port (default is 3232)
@@ -1088,8 +1188,11 @@ void publishInitialStatus() {
 void handleRoot() {
   String html = getMainPageHTML();
   
+  // Get unique client ID for banner display
+  String uniqueClientId = getUniqueClientId();
+  
   // Substitute placeholders with actual values for display
-  html.replace("CLIENT_ID_PLACEHOLDER", preferences.getString("mqtt_client_id", MQTT_CLIENT_ID));
+  html.replace("CLIENT_ID_PLACEHOLDER", preferences.getString("mqtt_client_id", uniqueClientId));
   html.replace("IP_ADDRESS_PLACEHOLDER", WiFi.localIP().toString());
   html.replace("WIFI_STATUS_PLACEHOLDER", WiFi.status() == WL_CONNECTED ? 
     "<span class=\"status-badge status-connected\">WiFi Connected</span>" : 
@@ -1098,13 +1201,23 @@ void handleRoot() {
     "<span class=\"status-badge status-connected\">Connected</span>" : 
     "<span class=\"status-badge status-disconnected\">Disconnected</span>");
   
+  // Get the hostname for display
+  String savedClientId = preferences.getString("mqtt_client_id", "");
+  String hostname;
+  if (savedClientId.length() > 0) {
+    hostname = savedClientId + ".local";
+  } else {
+    hostname = getUniqueHostname() + ".local";
+  }
+  html.replace("HOSTNAME_PLACEHOLDER", hostname);
+  
   // Replace form field placeholders with actual saved values from preferences
   // This ensures the form shows current saved settings, not default config values
   html.replace("WIFI_SSID_PLACEHOLDER", wifi_ssid);
   html.replace("WIFI_PASSWORD_PLACEHOLDER", wifi_password);
   html.replace("MQTT_BROKER_PLACEHOLDER", mqtt_broker_ip);
   html.replace("MQTT_PORT_PLACEHOLDER", String(mqtt_broker_port));
-  html.replace("MQTT_CLIENT_ID_PLACEHOLDER", preferences.getString("mqtt_client_id", MQTT_CLIENT_ID));
+  html.replace("MQTT_CLIENT_ID_PLACEHOLDER", preferences.getString("mqtt_client_id", uniqueClientId));
   html.replace("MQTT_CHANNEL_NAME_PLACEHOLDER", preferences.getString("mqtt_channel_name", MQTT_CHANNEL_NAME));
   html.replace("MQTT_TOPIC_PREFIX_PLACEHOLDER", preferences.getString("mqtt_topic_prefix", MQTT_TOPIC_PREFIX));
   html.replace("FIRMWARE_VERSION_PLACEHOLDER", String(FIRMWARE_VERSION));
@@ -1121,11 +1234,14 @@ void handleDevices() {
 void handleConfig() {
   DynamicJsonDocument doc(512);
   
+  // Get unique client ID for default value
+  String uniqueClientId = getUniqueClientId();
+  
   doc["wifi_ssid"] = wifi_ssid;
   doc["wifi_password"] = wifi_password;
   doc["mqtt_broker"] = mqtt_broker_ip;
   doc["mqtt_port"] = mqtt_broker_port;
-  doc["mqtt_client_id"] = preferences.getString("mqtt_client_id", MQTT_CLIENT_ID);
+  doc["mqtt_client_id"] = preferences.getString("mqtt_client_id", uniqueClientId);
   doc["mqtt_channel_name"] = preferences.getString("mqtt_channel_name", MQTT_CHANNEL_NAME);
   doc["mqtt_topic_prefix"] = preferences.getString("mqtt_topic_prefix", MQTT_TOPIC_PREFIX);
   
@@ -1259,6 +1375,7 @@ void handleStatus() {
     sensor["sensor"] = i + 1;
     sensor["state"] = sensor_states[i] ? "ACTIVE" : "INACTIVE";
     sensor["label"] = preferences.getString(("sensor_label_" + String(i + 1)).c_str(), ("Sensor " + String(i + 1)).c_str());
+    sensor["pin"] = getSensorPin(i + 1);
   }
   
   // Add turnout states
@@ -1268,6 +1385,7 @@ void handleStatus() {
     turnout["turnout"] = i + 1;
     turnout["position"] = turnout_states[i] ? "THROWN" : "CLOSED";
     turnout["label"] = preferences.getString(("turnout_label_" + String(i + 1)).c_str(), ("Turnout " + String(i + 1)).c_str());
+    turnout["pin"] = getTurnoutPin(i + 1);
   }
   
   // Add individual light states
@@ -1277,6 +1395,7 @@ void handleStatus() {
     light["light"] = i + 1;
     light["state"] = light_states[i] ? "ON" : "OFF";
     light["label"] = preferences.getString(("light_label_" + String(i + 1)).c_str(), ("Light " + String(i + 1)).c_str());
+    light["pin"] = getLightPin(i + 1);
   }
   
   // Add system info
@@ -1577,8 +1696,9 @@ void handleBackup() {
   String jsonStr;
   serializeJsonPretty(doc, jsonStr);
   
-  // Generate filename with client ID and timestamp
-  String filename = String(MQTT_CLIENT_ID) + "_backup_" + String(millis()) + ".json";
+  // Get unique client ID for backup filename
+  String uniqueClientId = getUniqueClientId();
+  String filename = uniqueClientId + "_backup_" + String(millis()) + ".json";
   
   // Send as file download
   web_server.sendHeader("Content-Disposition", "attachment; filename=" + filename);
@@ -1686,5 +1806,97 @@ void handleSaveDeviceLabels() {
     web_server.send(200, "text/plain", "Device labels saved successfully.");
   } else {
     web_server.send(400, "text/plain", "Missing device_labels argument");
+  }
+}
+
+void startMDNS() {
+  Serial.println("=== Starting mDNS ===");
+  
+  // Stop any existing mDNS service
+  MDNS.end();
+  delay(100);
+  
+  // Get the actual saved client ID for mDNS hostname
+  String savedClientId = preferences.getString("mqtt_client_id", "");
+  String hostname;
+  
+  if (savedClientId.length() > 0) {
+    // Use the saved client ID as the hostname
+    hostname = savedClientId;
+    Serial.println("Using saved client ID as hostname: " + hostname);
+  } else {
+    // Fallback to generated hostname if no saved client ID
+    hostname = getUniqueHostname();
+    Serial.println("No saved client ID, using generated hostname: " + hostname);
+  }
+  
+  Serial.println("Attempting to start mDNS with hostname: " + hostname);
+  
+  // Validate hostname
+  if (hostname.length() > 63) {
+    Serial.println("❌ Error: Hostname too long (max 63 characters)");
+    return;
+  }
+  
+  if (hostname.length() == 0) {
+    Serial.println("❌ Error: Empty hostname");
+    return;
+  }
+  
+  Serial.println("Hostname validation passed");
+  
+  // Start mDNS service
+  if (!MDNS.begin(hostname.c_str())) {
+    Serial.println("❌ Error setting up mDNS responder");
+    Serial.println("This may prevent hostname resolution");
+    Serial.println("Common causes:");
+    Serial.println("  - Hostname contains invalid characters");
+    Serial.println("  - mDNS service already running");
+    Serial.println("  - WiFi not fully connected");
+  } else {
+    Serial.println("✅ mDNS responder started successfully");
+    Serial.println("Hostname: " + hostname + ".local");
+    Serial.println("You can now access this device at: http://" + hostname + ".local");
+    
+    // Add service announcements
+    MDNS.addService("http", "tcp", 80);
+    MDNS.addService("arduino", "tcp", 3232);
+    Serial.println("HTTP and OTA services announced via mDNS");
+    
+    // Give mDNS time to initialize
+    delay(500);
+    Serial.println("mDNS initialization complete");
+  }
+  Serial.println("===============================");
+}
+
+// Helper functions to get pin numbers
+String getSensorPin(int sensorNum) {
+  switch(sensorNum) {
+    case 1: return String(SENSOR_PIN_1);
+    case 2: return String(SENSOR_PIN_2);
+    case 3: return String(SENSOR_PIN_3);
+    case 4: return String(SENSOR_PIN_4);
+    default: return "N/A";
+  }
+}
+
+String getTurnoutPin(int turnoutNum) {
+  switch(turnoutNum) {
+    case 1: return String(TURNOUT_PIN_1);
+    case 2: return String(TURNOUT_PIN_2);
+    default: return "N/A";
+  }
+}
+
+String getLightPin(int lightNum) {
+  switch(lightNum) {
+    case 1: return String(LIGHT_PIN_1);
+    case 2: return String(LIGHT_PIN_2);
+    case 3: return String(LIGHT_PIN_3);
+    case 4: return String(LIGHT_PIN_4);
+    case 5: return String(LIGHT_PIN_5);
+    case 6: return String(LIGHT_PIN_6);
+    default: return "N/A";
   }
 }
