@@ -26,6 +26,96 @@
 #include <ArduinoOTA.h>
 #include <ESPmDNS.h>
 #include "html_content.h"
+#include <vector>
+
+// Pin capability definitions
+struct PinCapability {
+  int pin;
+  bool canInput;
+  bool canOutput;
+  bool canPWM;
+  String description;
+};
+
+// Define available pins and their capabilities
+// Reserved pins: GPIO0, GPIO2, GPIO4, GPIO5, GPIO12, GPIO15 (boot-strap)
+// Reserved pins: GPIO1, GPIO3 (USB-Serial), GPIO16, GPIO17 (UART2), GPIO21, GPIO22 (I²C)
+const PinCapability AVAILABLE_PINS[] = {
+  // General I/O pins with PWM capability (sorted by pin number)
+  {6,  true,  true,  true,  "GPIO6 - I/O + PWM"},
+  {7,  true,  true,  true,  "GPIO7 - I/O + PWM"},
+  {8,  true,  true,  true,  "GPIO8 - I/O + PWM"},
+  {9,  true,  true,  true,  "GPIO9 - I/O + PWM"},
+  {10, true,  true,  true,  "GPIO10 - I/O + PWM"},
+  {11, true,  true,  true,  "GPIO11 - I/O + PWM"},
+  {13, true,  true,  true,  "GPIO13 - I/O + PWM"},
+  {14, true,  true,  true,  "GPIO14 - I/O + PWM"},
+  {18, true,  true,  true,  "GPIO18 - I/O + PWM"},
+  {19, true,  true,  true,  "GPIO19 - I/O + PWM"},
+  {20, true,  true,  true,  "GPIO20 - I/O + PWM"},
+  {23, true,  true,  true,  "GPIO23 - I/O + PWM"},
+  {24, true,  true,  true,  "GPIO24 - I/O + PWM"},
+  {25, true,  true,  true,  "GPIO25 - I/O + PWM"},
+  {26, true,  true,  true,  "GPIO26 - I/O + PWM"},
+  {27, true,  true,  true,  "GPIO27 - I/O + PWM"},
+  {28, true,  true,  true,  "GPIO28 - I/O + PWM"},
+  {29, true,  true,  true,  "GPIO29 - I/O + PWM"},
+  {30, true,  true,  true,  "GPIO30 - I/O + PWM"},
+  {31, true,  true,  true,  "GPIO31 - I/O + PWM"},
+  {32, true,  true,  true,  "GPIO32 - I/O + PWM"},
+  {33, true,  true,  true,  "GPIO33 - I/O + PWM"},
+  
+  // Input-only pins (no PWM, no output)
+  {34, true,  false, false, "GPIO34 - Input Only"},
+  {35, true,  false, false, "GPIO35 - Input Only"},
+  {36, true,  false, false, "GPIO36 - Input Only"},
+  {37, true,  false, false, "GPIO37 - Input Only"},
+  {38, true,  false, false, "GPIO38 - Input Only"},
+  {39, true,  false, false, "GPIO39 - Input Only"}
+};
+
+const int NUM_AVAILABLE_PINS = sizeof(AVAILABLE_PINS) / sizeof(AVAILABLE_PINS[0]);
+
+// Function to get pin capabilities
+PinCapability getPinCapability(int pin) {
+  for (int i = 0; i < NUM_AVAILABLE_PINS; i++) {
+    if (AVAILABLE_PINS[i].pin == pin) {
+      return AVAILABLE_PINS[i];
+    }
+  }
+  // Return default capability for reserved pins
+  return {pin, false, false, false, "Reserved Pin"};
+}
+
+// Function to check if pin is available for a specific function
+bool isPinAvailableForFunction(int pin, const String& function) {
+  PinCapability cap = getPinCapability(pin);
+  
+  if (function == "unused") {
+    return false; // Unused pins are not available for any function
+  } else if (function == "sensor") {
+    return cap.canInput;
+  } else if (function == "turnout") {
+    return cap.canOutput;
+  } else if (function == "light") {
+    return cap.canOutput && cap.canPWM;
+  }
+  
+  return false;
+}
+
+// Function to get available pins for a specific function
+std::vector<int> getAvailablePinsForFunction(const String& function) {
+  std::vector<int> availablePins;
+  
+  for (int i = 0; i < NUM_AVAILABLE_PINS; i++) {
+    if (isPinAvailableForFunction(AVAILABLE_PINS[i].pin, function)) {
+      availablePins.push_back(AVAILABLE_PINS[i].pin);
+    }
+  }
+  
+  return availablePins;
+}
 
 // WiFi configuration
 String default_ssid = "";  // Will be set in setup using MAC address
@@ -638,6 +728,24 @@ void setupWebServer() {
     web_server.send(200, "text/plain", response);
   });
   
+  web_server.on("/pin-capabilities", HTTP_GET, []() {
+    DynamicJsonDocument doc(1024);
+    JsonArray pinsArray = doc.createNestedArray("pins");
+    
+    for (int i = 0; i < NUM_AVAILABLE_PINS; i++) {
+      JsonObject pinObj = pinsArray.createNestedObject();
+      pinObj["pin"] = AVAILABLE_PINS[i].pin;
+      pinObj["canInput"] = AVAILABLE_PINS[i].canInput;
+      pinObj["canOutput"] = AVAILABLE_PINS[i].canOutput;
+      pinObj["canPWM"] = AVAILABLE_PINS[i].canPWM;
+      pinObj["description"] = AVAILABLE_PINS[i].description;
+    }
+    
+    String response;
+    serializeJson(doc, response);
+    web_server.send(200, "application/json", response);
+  });
+  
   // OTA update page
 
   web_server.on("/doUpdate", HTTP_POST, handleDoUpdate, handleUpdateBody);
@@ -1016,6 +1124,13 @@ void handleTurnoutControl(String topic, String payload) {
       Serial.println("ℹ️ Turnout " + String(turnout_num + 1) + " already in CLOSED position");
     }
     
+  } else if (payload == "toggle") {
+    // Toggle the current state
+    turnout_states[turnout_num] = !turnout_states[turnout_num];
+    digitalWrite(turnout_num == 0 ? TURNOUT_PIN_1 : TURNOUT_PIN_2, turnout_states[turnout_num] ? HIGH : LOW);
+    String newState = turnout_states[turnout_num] ? "THROWN" : "CLOSED";
+    Serial.println("Turnout " + String(turnout_num + 1) + " toggled to " + newState);
+    state_changed = true;
   } else {
     Serial.println("❌ Unknown position specified in turnout control message: " + payload);
     Serial.println("=====================");
@@ -1483,9 +1598,10 @@ void handleStatus() {
     JsonObject sensor = sensorArray.createNestedObject();
     sensor["sensor"] = i + 1;
     sensor["state"] = sensor_states[i] ? "ACTIVE" : "INACTIVE";
-    sensor["label"] = preferences.getString(("sensor_label_" + String(i + 1)).c_str(), ("Sensor " + String(i + 1)).c_str());
+    sensor["label"] = preferences.getString(("sensor_" + String(i + 1) + "_label").c_str(), ("Sensor " + String(i + 1)).c_str());
     sensor["id"] = preferences.getString(("sensor_" + String(i + 1) + "_id").c_str(), String(i + 1));
     sensor["pin"] = preferences.getString(("sensor_" + String(i + 1) + "_pin").c_str(), getSensorPin(i + 1));
+    sensor["type"] = preferences.getString(("sensor_" + String(i + 1) + "_type").c_str(), "sensor");
   }
   
   // Add turnout states
@@ -1494,9 +1610,10 @@ void handleStatus() {
     JsonObject turnout = turnoutArray.createNestedObject();
     turnout["turnout"] = i + 1;
     turnout["position"] = turnout_states[i] ? "THROWN" : "CLOSED";
-    turnout["label"] = preferences.getString(("turnout_label_" + String(i + 1)).c_str(), ("Turnout " + String(i + 1)).c_str());
+    turnout["label"] = preferences.getString(("turnout_" + String(i + 1) + "_label").c_str(), ("Turnout " + String(i + 1)).c_str());
     turnout["id"] = preferences.getString(("turnout_" + String(i + 1) + "_id").c_str(), String(i + 1));
     turnout["pin"] = preferences.getString(("turnout_" + String(i + 1) + "_pin").c_str(), getTurnoutPin(i + 1));
+    turnout["type"] = preferences.getString(("turnout_" + String(i + 1) + "_type").c_str(), "turnout");
   }
   
   // Add individual light states
@@ -1505,9 +1622,10 @@ void handleStatus() {
     JsonObject light = lightArray.createNestedObject();
     light["light"] = i + 1;
     light["state"] = light_states[i] ? "ON" : "OFF";
-    light["label"] = preferences.getString(("light_label_" + String(i + 1)).c_str(), ("Light " + String(i + 1)).c_str());
+    light["label"] = preferences.getString(("light_" + String(i + 1) + "_label").c_str(), ("Light " + String(i + 1)).c_str());
     light["id"] = preferences.getString(("light_" + String(i + 1) + "_id").c_str(), String(i + 1));
     light["pin"] = preferences.getString(("light_" + String(i + 1) + "_pin").c_str(), getLightPin(i + 1));
+    light["type"] = preferences.getString(("light_" + String(i + 1) + "_type").c_str(), "light");
   }
   
   // Add system info
@@ -1549,6 +1667,12 @@ void handleDeviceControl() {
       turnout_states[number - 1] = false;
       digitalWrite(number == 1 ? TURNOUT_PIN_1 : TURNOUT_PIN_2, LOW);
       Serial.println("Turnout " + String(number) + " set to CLOSED");
+    } else if (action == "toggle") {
+      // Toggle the current state
+      turnout_states[number - 1] = !turnout_states[number - 1];
+      digitalWrite(number == 1 ? TURNOUT_PIN_1 : TURNOUT_PIN_2, turnout_states[number - 1] ? HIGH : LOW);
+      String newState = turnout_states[number - 1] ? "THROWN" : "CLOSED";
+      Serial.println("Turnout " + String(number) + " toggled to " + newState);
     } else {
       web_server.send(400, "text/plain", "Invalid turnout action");
       return;
@@ -1789,6 +1913,7 @@ void handleBackup() {
     sensor["label"] = preferences.getString(("sensor_" + String(i) + "_label").c_str(), "Sensor " + String(i));
     sensor["id"] = preferences.getString(("sensor_" + String(i) + "_id").c_str(), String(i));
     sensor["pin"] = preferences.getString(("sensor_" + String(i) + "_pin").c_str(), getSensorPin(i));
+    sensor["type"] = preferences.getString(("sensor_" + String(i) + "_type").c_str(), "sensor");
   }
   
   // Turnout settings
@@ -1797,6 +1922,7 @@ void handleBackup() {
     turnout["label"] = preferences.getString(("turnout_" + String(i) + "_label").c_str(), "Turnout " + String(i));
     turnout["id"] = preferences.getString(("turnout_" + String(i) + "_id").c_str(), String(i));
     turnout["pin"] = preferences.getString(("turnout_" + String(i) + "_pin").c_str(), getTurnoutPin(i));
+    turnout["type"] = preferences.getString(("turnout_" + String(i) + "_type").c_str(), "turnout");
   }
   
   // Light settings
@@ -1805,6 +1931,7 @@ void handleBackup() {
     light["label"] = preferences.getString(("light_" + String(i) + "_label").c_str(), "Light " + String(i));
     light["id"] = preferences.getString(("light_" + String(i) + "_id").c_str(), String(i));
     light["pin"] = preferences.getString(("light_" + String(i) + "_pin").c_str(), getLightPin(i));
+    light["type"] = preferences.getString(("light_" + String(i) + "_type").c_str(), "light");
   }
   
   // Add timestamp
@@ -1875,6 +2002,7 @@ void handleRestore() {
           if (sensor.containsKey("label")) preferences.putString(("sensor_" + String(i) + "_label").c_str(), sensor["label"].as<String>());
           if (sensor.containsKey("id")) preferences.putString(("sensor_" + String(i) + "_id").c_str(), sensor["id"].as<String>());
           if (sensor.containsKey("pin")) preferences.putString(("sensor_" + String(i) + "_pin").c_str(), sensor["pin"].as<String>());
+          if (sensor.containsKey("type")) preferences.putString(("sensor_" + String(i) + "_type").c_str(), sensor["type"].as<String>());
         }
       }
       
@@ -1886,6 +2014,7 @@ void handleRestore() {
           if (turnout.containsKey("label")) preferences.putString(("turnout_" + String(i) + "_label").c_str(), turnout["label"].as<String>());
           if (turnout.containsKey("id")) preferences.putString(("turnout_" + String(i) + "_id").c_str(), turnout["id"].as<String>());
           if (turnout.containsKey("pin")) preferences.putString(("turnout_" + String(i) + "_pin").c_str(), turnout["pin"].as<String>());
+          if (turnout.containsKey("type")) preferences.putString(("turnout_" + String(i) + "_type").c_str(), turnout["type"].as<String>());
         }
       }
       
@@ -1897,6 +2026,7 @@ void handleRestore() {
           if (light.containsKey("label")) preferences.putString(("light_" + String(i) + "_label").c_str(), light["label"].as<String>());
           if (light.containsKey("id")) preferences.putString(("light_" + String(i) + "_id").c_str(), light["id"].as<String>());
           if (light.containsKey("pin")) preferences.putString(("light_" + String(i) + "_pin").c_str(), light["pin"].as<String>());
+          if (light.containsKey("type")) preferences.putString(("light_" + String(i) + "_type").c_str(), light["type"].as<String>());
         }
       }
     }
@@ -2079,22 +2209,87 @@ void handleSaveDeviceSettings() {
     JsonObject device_settings = doc["device_settings"];
     Serial.println("Device settings object found, processing...");
     
-    // Process each setting
-    for (JsonPair kv : device_settings) {
-      String key = kv.key().c_str();
-      String value = kv.value().as<String>();
+    // Process each device setting
+    for (JsonPair device : device_settings) {
+      String deviceKey = device.key().c_str();
+      JsonObject deviceData = device.value();
       
-      // Save to preferences
-      bool success = preferences.putString(key.c_str(), value);
-      Serial.println("Saving: " + key + " = " + value + " (success: " + String(success) + ")");
+      Serial.println("Processing device: " + deviceKey);
+      
+      // Extract device type and number from key (e.g., "sensor_1", "turnout_2", "light_3")
+      int underscorePos = deviceKey.lastIndexOf('_');
+      if (underscorePos > 0) {
+        String deviceType = deviceKey.substring(0, underscorePos);
+        String deviceNumStr = deviceKey.substring(underscorePos + 1);
+        int deviceNum = deviceNumStr.toInt();
+        
+        if (deviceNum > 0) {
+          Serial.println("  Device type: " + deviceType + ", number: " + deviceNum);
+          
+          // Save individual settings for this device
+          if (deviceData.containsKey("label")) {
+            String key = deviceType + "_" + deviceNum + "_label";
+            String value = deviceData["label"].as<String>();
+            preferences.putString(key.c_str(), value);
+            Serial.println("  Saved " + key + " = " + value);
+          }
+          
+          if (deviceData.containsKey("id")) {
+            String key = deviceType + "_" + deviceNum + "_id";
+            String value = deviceData["id"].as<String>();
+            preferences.putString(key.c_str(), value);
+            Serial.println("  Saved " + key + " = " + value);
+          }
+          
+          if (deviceData.containsKey("pin")) {
+            String key = deviceType + "_" + deviceNum + "_pin";
+            int value = deviceData["pin"].as<int>();
+            preferences.putInt(key.c_str(), value);
+            Serial.println("  Saved " + key + " = " + value);
+          }
+          
+          if (deviceData.containsKey("type")) {
+            String key = deviceType + "_" + deviceNum + "_type";
+            String value = deviceData["type"].as<String>();
+            preferences.putString(key.c_str(), value);
+            Serial.println("  Saved " + key + " = " + value);
+          }
+        }
+      }
     }
 
     // Verify what was saved
     Serial.println("=== Verifying saved settings ===");
-    for (JsonPair kv : device_settings) {
-      String key = kv.key().c_str();
-      String saved_value = preferences.getString(key.c_str(), "NOT_FOUND");
-      Serial.println("Verification - " + key + ": " + saved_value);
+    for (JsonPair device : device_settings) {
+      String deviceKey = device.key().c_str();
+      JsonObject deviceData = device.value();
+      
+      int underscorePos = deviceKey.lastIndexOf('_');
+      if (underscorePos > 0) {
+        String deviceType = deviceKey.substring(0, underscorePos);
+        String deviceNumStr = deviceKey.substring(underscorePos + 1);
+        int deviceNum = deviceNumStr.toInt();
+        
+        if (deviceNum > 0) {
+          Serial.println("Verifying device: " + deviceKey);
+          
+          String labelKey = deviceType + "_" + deviceNum + "_label";
+          String savedLabel = preferences.getString(labelKey.c_str(), "NOT_FOUND");
+          Serial.println("  " + labelKey + ": " + savedLabel);
+          
+          String idKey = deviceType + "_" + deviceNum + "_id";
+          String savedId = preferences.getString(idKey.c_str(), "NOT_FOUND");
+          Serial.println("  " + idKey + ": " + savedId);
+          
+          String pinKey = deviceType + "_" + deviceNum + "_pin";
+          int savedPin = preferences.getInt(pinKey.c_str(), -1);
+          Serial.println("  " + pinKey + ": " + savedPin);
+          
+          String typeKey = deviceType + "_" + deviceNum + "_type";
+          String savedType = preferences.getString(typeKey.c_str(), "NOT_FOUND");
+          Serial.println("  " + typeKey + ": " + savedType);
+        }
+      }
     }
 
     Serial.println("Device settings saved successfully.");
