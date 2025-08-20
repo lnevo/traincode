@@ -516,7 +516,7 @@ const char* getMainPageHTML() {
                         </tr>
                     </thead>
                     <tbody id="device-table-body">
-                        <tr><td colspan="5" style="text-align:center;color:var(--text-secondary);">Loading device status...</td></tr>
+                        <tr><td colspan="6" style="text-align:center;color:var(--text-secondary);">Loading device status...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -690,7 +690,7 @@ const char* getMainPageHTML() {
                 // Show error in the table
                 const table = document.getElementById('device-table-body');
                 if (table) {
-                    table.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--danger);">Error loading status: ' + error.message + '</td></tr>';
+                    table.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--danger);">Error loading status: ' + error.message + '</td></tr>';
                 }
             });
         }
@@ -719,6 +719,8 @@ const char* getMainPageHTML() {
         
         function updateDeviceTable(data) {
             console.log('Updating device table with new data');
+            console.log('Data received:', data);
+            
             const table = document.getElementById('device-table-body');
             if (!table) {
                 console.log('Device table not found, doing full reload');
@@ -726,6 +728,13 @@ const char* getMainPageHTML() {
                 return;
             }
             let tableHtml = '';
+            
+            // Check if we have the new all_pins data structure
+            if (data.all_pins && data.all_pins.length > 0) {
+                console.log('Using new all_pins data structure');
+                // Use the new data structure - this will be implemented in the next step
+                // For now, fall back to the old method
+            }
             
             // Generate rows for all available pins, sorted by pin number
             // Reserved pins: GPIO0,1,2,3,4,5,6,7,8,9,10,11,12,15,16,17,20,24,28,29,30,31,37,38
@@ -799,6 +808,7 @@ const char* getMainPageHTML() {
                     deviceId = '';
                     deviceLabel = '';
                     deviceState = 'N/A';
+                    deviceIndex = pinNum; // Use pin number as unique index for unused pins
                     deviceControl = '<button class="control-btn" style="min-width:80px;cursor:default;background:var(--border-color);color:var(--text-secondary);" disabled>N/A</button>';
                 }
                 
@@ -1139,14 +1149,9 @@ const char* getMainPageHTML() {
                 if (response.ok) {
                     console.log(type + ' ' + number + ' set to ' + action);
                     
-                    // Immediately refresh the GUI to show the new state
-                    // This provides instant visual feedback instead of waiting for polling
+                    // Refresh the GUI to show the new state
+                    // Single call to avoid duplicate MQTT sends
                     checkChanges();
-                    
-                    // Also force an immediate status check to ensure we get the latest state
-                    setTimeout(() => {
-                        checkChanges();
-                    }, 100); // Small delay to ensure the ESP32 has processed the command
                     
                 } else {
                     console.error('Control request failed');
@@ -1169,14 +1174,9 @@ const char* getMainPageHTML() {
                 if (response.ok) {
                     console.log('Light ' + lightNumber + ' toggled');
                     
-                    // Immediately refresh the GUI to show the new state
-                    // This provides instant visual feedback instead of waiting for polling
+                    // Refresh the GUI to show the new state
+                    // Single call to avoid duplicate MQTT sends
                     checkChanges();
-                    
-                    // Also force an immediate status check to ensure we get the latest state
-                    setTimeout(() => {
-                        checkChanges();
-                    }, 100); // Small delay to ensure the ESP32 has processed the command
                     
                 } else {
                     console.error('Light control request failed');
@@ -1189,12 +1189,15 @@ const char* getMainPageHTML() {
             const key = `${type}_${number}_label`;
             localStorage.setItem(key, newLabel);
             
-            // Also update the form field if it exists
-            const selector = `tr[data-device-type="${type}"][data-device-num="${number}"] .device-label`;
-            const input = document.querySelector(selector);
-            if (input) {
-                input.value = newLabel;
-                console.log('Updated form field for device label:', selector, '=', newLabel);
+            // Find the row and update the input field
+            const selector = `tr[data-device-type="${type}"][data-device-num="${number}"]`;
+            const row = document.querySelector(selector);
+            if (row) {
+                const input = row.querySelector('.device-label');
+                if (input) {
+                    input.value = newLabel;
+                    console.log('Updated form field for device label:', newLabel);
+                }
             }
             
             console.log('Device label saved:', key, '=', newLabel);
@@ -1204,12 +1207,15 @@ const char* getMainPageHTML() {
             const key = `${type}_${number}_id`;
             localStorage.setItem(key, newId);
             
-            // Also update the form field if it exists
-            const selector = `tr[data-device-type="${type}"][data-device-num="${number}"] .device-id`;
-            const input = document.querySelector(selector);
-            if (input) {
-                input.value = newId;
-                console.log('Updated form field for device ID:', selector, '=', newId);
+            // Find the row and update the input field
+            const selector = `tr[data-device-type="${type}"][data-device-num="${number}"]`;
+            const row = document.querySelector(selector);
+            if (row) {
+                const input = row.querySelector('.device-id');
+                if (input) {
+                    input.value = newId;
+                    console.log('Updated form field for device ID:', newId);
+                }
             }
             
             console.log('Device ID updated:', key, '=', newId);
@@ -1219,12 +1225,15 @@ const char* getMainPageHTML() {
             const key = `${type}_${number}_pin`;
             localStorage.setItem(key, newPin);
             
-            // Also update the form field if it exists
-            const selector = `tr[data-device-type="${type}"][data-device-num="${number}"] .device-pin`;
-            const select = document.querySelector(selector);
-            if (select) {
-                select.value = newPin;
-                console.log('Updated form field for device pin:', selector, '=', newPin);
+            // Find the row and update the input field
+            const selector = `tr[data-device-type="${type}"][data-device-num="${number}"]`;
+            const row = document.querySelector(selector);
+            if (row) {
+                const input = row.querySelector('.device-pin');
+                if (input) {
+                    input.value = newPin;
+                    console.log('Updated form field for device pin:', newPin);
+                }
             }
             
             console.log('Device pin updated:', key, '=', newPin);
@@ -1234,12 +1243,20 @@ const char* getMainPageHTML() {
             const key = `${type}_${number}_type`;
             localStorage.setItem(key, newType);
             
-            // Also update the form field if it exists
-            const selector = `tr[data-device-type="${type}"][data-device-num="${number}"] .device-type`;
-            const select = document.querySelector(selector);
-            if (select) {
-                select.value = newType;
-                console.log('Updated form field for device type:', selector, '=', newType);
+            // Find the row and update both the dropdown and the data attribute
+            const selector = `tr[data-device-type="${type}"][data-device-num="${number}"]`;
+            const row = document.querySelector(selector);
+            if (row) {
+                // Update the dropdown value
+                const select = row.querySelector('.device-type');
+                if (select) {
+                    select.value = newType;
+                    console.log('Updated dropdown value:', newType);
+                }
+                
+                // Update the row's data-device-type attribute
+                row.setAttribute('data-device-type', newType);
+                console.log('Updated row data-device-type attribute to:', newType);
             }
             
             console.log('Device type updated:', key, '=', newType);
@@ -1419,21 +1436,29 @@ const char* getMainPageHTML() {
                 event.preventDefault();
             }
             
-            const rows = document.querySelectorAll('#deviceTable tr[data-device-type]');
+            const rows = document.querySelectorAll('#device-table-body tr[data-device-type]');
+            console.log('Found rows:', rows.length);
             const deviceSettings = {};
             
-            rows.forEach((row) => {
+            rows.forEach((row, index) => {
                 const deviceType = row.getAttribute('data-device-type');
                 const deviceNum = row.getAttribute('data-device-num');
                 const pinNum = row.getAttribute('data-pin');
+                
+                console.log(`Row ${index}: deviceType=${deviceType}, deviceNum=${deviceNum}, pinNum=${pinNum}`);
+                console.log(`Row ${index} attributes:`, {
+                    'data-device-type': row.getAttribute('data-device-type'),
+                    'data-device-num': row.getAttribute('data-device-num'),
+                    'data-pin': row.getAttribute('data-pin')
+                });
                 
                 if (deviceType && deviceNum && pinNum) {
                     const label = row.querySelector('.device-label').value;
                     const id = row.querySelector('.device-id').value;
                     const type = row.querySelector('.device-type').value;
                     
-                    // Create a unique key for this device
-                    const deviceKey = `${deviceType}_${deviceNum}`;
+                    // Create a unique key using the pin number for consistency
+                    const deviceKey = `pin_${pinNum}`;
                     
                     deviceSettings[deviceKey] = {
                         label: label,
@@ -1447,6 +1472,7 @@ const char* getMainPageHTML() {
             });
             
             console.log('All device settings:', deviceSettings);
+            console.log('Device settings JSON:', JSON.stringify(deviceSettings, null, 2));
             
             // Send to ESP32
             fetch('/save_device_settings', {
@@ -1506,58 +1532,21 @@ const char* getMainPageHTML() {
 // Device table HTML generation
 const char* getDeviceTableHTML() {
   static const char* html = R"rawliteral(
-    <tr>
-        <td>Sensor</td>
-        <td>1</td>
-        <td id="sensor-1-status">Unknown</td>
-        <td><em>Read-only</em></td>
-    </tr>
-    <tr>
-        <td>Sensor</td>
-        <td>2</td>
-        <td id="sensor-2-status">Unknown</td>
-        <td><em>Read-only</em></td>
-    </tr>
-    <tr>
-        <td>Sensor</td>
-        <td>3</td>
-        <td id="sensor-3-status">Unknown</td>
-        <td><em>Read-only</em></td>
-    </tr>
-    <tr>
-        <td>Sensor</td>
-        <td>4</td>
-        <td id="sensor-4-status">Unknown</td>
-        <td><em>Read-only</em></td>
-    </tr>
-    <tr>
-        <td>Turnout</td>
-        <td>1</td>
-        <td id="turnout-1-status">Unknown</td>
-        <td>
-            <button onclick="controlDevice(event,'turnout',1,'THROWN')" class="control-btn btn-inactive" id="turnout-1-thrown">THROWN</button>
-            <button onclick="controlDevice(event,'turnout',1,'CLOSED')" class="control-btn btn-inactive" id="turnout-1-closed">CLOSED</button>
-        </td>
-    </tr>
-    <tr>
-        <td>Turnout</td>
-        <td>2</td>
-        <td id="turnout-2-status">Unknown</td>
-        <td>
-            <button onclick="controlDevice(event,'turnout',2,'THROWN')" class="control-btn btn-inactive" id="turnout-2-thrown">THROWN</button>
-            <button onclick="controlDevice(event,'turnout',2,'CLOSED')" class="control-btn btn-inactive" id="turnout-2-closed">CLOSED</button>
-        </td>
-    </tr>
-    <tr>
-        <td>Signal</td>
-        <td>1</td>
-        <td id="signal-status">Unknown</td>
-        <td>
-            <button onclick="controlDevice(event,'signal',1,'RED')" class="control-btn btn-red" id="signal-red">RED</button>
-            <button onclick="controlDevice(event,'signal',1,'YELLOW')" class="control-btn btn-yellow" id="signal-yellow">YELLOW</button>
-            <button onclick="controlDevice(event,'signal',1,'GREEN')" class="control-btn btn-green" id="signal-green">GREEN</button>
-        </td>
-    </tr>
+<table class="device-table">
+    <thead>
+        <tr>
+            <th>Type</th>
+            <th>ID</th>
+            <th>Pin</th>
+            <th>State</th>
+            <th>Label</th>
+            <th>Control</th>
+        </tr>
+    </thead>
+    <tbody id="device-table-body">
+        <tr><td colspan="6" style="text-align:center;color:var(--text-secondary);">Loading device status...</td></tr>
+    </tbody>
+</table>
 )rawliteral";
   return html;
 }
