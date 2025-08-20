@@ -813,28 +813,52 @@ void setupWebServer() {
     
     response += "Device ID Mappings:\n";
     
-    // Show sensor mappings
+    // Show sensor mappings - dynamically count how many exist
     response += "Sensors:\n";
-    for (int i = 1; i <= 4; i++) {
-      String customId = preferences.getString(("sensor_" + String(i) + "_id").c_str(), String(i));
-      String topic = mqtt_sensor_topic + customId;
-      response += "  Sensor " + String(i) + " -> ID: " + customId + " -> Topic: " + topic + "\n";
+    int debugSensorCount = 0;
+    for (int i = 1; i <= 10; i++) {
+      String id = preferences.getString(("sensor_" + String(i) + "_id").c_str(), "");
+      if (id != "" && id != "NOT_FOUND") {
+        debugSensorCount++;
+        String customId = preferences.getString(("sensor_" + String(i) + "_id").c_str(), String(i));
+        String topic = mqtt_sensor_topic + customId;
+        response += "  Sensor " + String(i) + " -> ID: " + customId + " -> Topic: " + topic + "\n";
+      }
+    }
+    if (debugSensorCount == 0) {
+      response += "  No sensors configured\n";
     }
     
-    // Show turnout mappings
+    // Show turnout mappings - dynamically count how many exist
     response += "\nTurnouts:\n";
-    for (int i = 1; i <= 2; i++) {
-      String customId = preferences.getString(("turnout_" + String(i) + "_id").c_str(), String(i));
-      String topic = mqtt_turnout_topic + customId;
-      response += "  Turnout " + String(i) + " -> ID: " + customId + " -> Topic: " + topic + "\n";
+    int debugTurnoutCount = 0;
+    for (int i = 1; i <= 10; i++) {
+      String id = preferences.getString(("turnout_" + String(i) + "_id").c_str(), "");
+      if (id != "" && id != "NOT_FOUND") {
+        debugTurnoutCount++;
+        String customId = preferences.getString(("turnout_" + String(i) + "_id").c_str(), String(i));
+        String topic = mqtt_turnout_topic + customId;
+        response += "  Turnout " + String(i) + " -> ID: " + customId + " -> Topic: " + topic + "\n";
+      }
+    }
+    if (debugTurnoutCount == 0) {
+      response += "  No turnouts configured\n";
     }
     
-    // Show light mappings
+    // Show light mappings - dynamically count how many exist
     response += "Lights:\n";
-    for (int i = 1; i <= 6; i++) {
-      String customId = preferences.getString(("light_" + String(i) + "_id").c_str(), String(i));
-      String topic = mqtt_light_topic + customId;
-      response += "  Light " + String(i) + " -> ID: " + customId + " -> Topic: " + topic + "\n";
+    int debugLightCount = 0;
+    for (int i = 1; i <= 10; i++) {
+      String id = preferences.getString(("light_" + String(i) + "_id").c_str(), "");
+      if (id != "" && id != "NOT_FOUND") {
+        debugLightCount++;
+        String customId = preferences.getString(("light_" + String(i) + "_id").c_str(), String(i));
+        String topic = mqtt_light_topic + customId;
+        response += "  Light " + String(i) + " -> Topic: " + topic + "\n";
+      }
+    }
+    if (debugLightCount == 0) {
+      response += "  No lights configured\n";
     }
     
     // Also show what's actually in the preferences for comparison
@@ -850,13 +874,20 @@ void setupWebServer() {
     }
     
     response += "\nTurnouts:\n";
-    for (int i = 1; i <= 2; i++) {
-      String id = preferences.getString(("turnout_" + String(i) + "_id").c_str(), "NOT_FOUND");
-      String label = preferences.getString(("turnout_" + String(i) + "_label").c_str(), "NOT_FOUND");
-      String pin = preferences.getString(("turnout_" + String(i) + "_pin").c_str(), "NOT_FOUND");
-      response += "  turnout_" + String(i) + "_id = " + id + "\n";
-      response += "  turnout_" + String(i) + "_label = " + label + "\n";
-      response += "  turnout_" + String(i) + "_pin = " + pin + "\n";
+    int turnoutCount = 0;
+    for (int i = 1; i <= 10; i++) {
+      String id = preferences.getString(("turnout_" + String(i) + "_id").c_str(), "");
+      if (id != "" && id != "NOT_FOUND") {
+        turnoutCount++;
+        String label = preferences.getString(("turnout_" + String(i) + "_label").c_str(), "NOT_FOUND");
+        String pin = preferences.getString(("turnout_" + String(i) + "_pin").c_str(), "NOT_FOUND");
+        response += "  turnout_" + String(i) + "_id = " + id + "\n";
+        response += "  turnout_" + String(i) + "_label = " + label + "\n";
+        response += "  turnout_" + String(i) + "_pin = " + pin + "\n";
+      }
+    }
+    if (turnoutCount == 0) {
+      response += "  No turnouts configured\n";
     }
     
     response += "\nLights:\n";
@@ -1768,40 +1799,55 @@ void handleMQTTConfig() {
 void handleStatus() {
   DynamicJsonDocument doc(2048); // Increased size for more data
   
-  // Add sensor states
+  // Add sensor states - dynamically count how many exist
   JsonArray sensorArray = doc.createNestedArray("sensor_states");
-  for (int i = 0; i < 4; i++) {  // Changed from 3 to 4 sensors
-    JsonObject sensor = sensorArray.createNestedObject();
-    sensor["sensor"] = i + 1;
-    sensor["state"] = sensor_states[i] ? "ACTIVE" : "INACTIVE";
-    sensor["label"] = preferences.getString(("sensor_" + String(i + 1) + "_label").c_str(), ("Sensor " + String(i + 1)).c_str());
-    sensor["id"] = preferences.getString(("sensor_" + String(i + 1) + "_id").c_str(), String(i + 1));
-    sensor["pin"] = preferences.getString(("sensor_" + String(i + 1) + "_pin").c_str(), getSensorPin(i + 1));
-    sensor["type"] = preferences.getString(("sensor_" + String(i + 1) + "_type").c_str(), "sensor");
+  int sensorCount = 0;
+  for (int i = 1; i <= 10; i++) {
+    String id = preferences.getString(("sensor_" + String(i) + "_id").c_str(), "");
+    if (id != "" && id != "NOT_FOUND") {
+      sensorCount++;
+      JsonObject sensor = sensorArray.createNestedObject();
+      sensor["sensor"] = i;
+      sensor["state"] = (i <= 4) ? (sensor_states[i-1] ? "ACTIVE" : "INACTIVE") : "INACTIVE";
+      sensor["label"] = preferences.getString(("sensor_" + String(i) + "_label").c_str(), ("Sensor " + String(i)).c_str());
+      sensor["id"] = id;
+      sensor["pin"] = preferences.getString(("sensor_" + String(i) + "_pin").c_str(), getSensorPin(i));
+      sensor["type"] = preferences.getString(("sensor_" + String(i) + "_type").c_str(), "sensor");
+    }
   }
   
-  // Add turnout states
+  // Add turnout states - dynamically count how many exist
   JsonArray turnoutArray = doc.createNestedArray("turnout_states");
-  for (int i = 0; i < 2; i++) {
-    JsonObject turnout = turnoutArray.createNestedObject();
-    turnout["turnout"] = i + 1;
-    turnout["position"] = turnout_states[i] ? "THROWN" : "CLOSED";
-    turnout["label"] = preferences.getString(("turnout_" + String(i + 1) + "_label").c_str(), ("Turnout " + String(i + 1)).c_str());
-    turnout["id"] = preferences.getString(("turnout_" + String(i + 1) + "_id").c_str(), String(i + 1));
-    turnout["pin"] = preferences.getString(("turnout_" + String(i + 1) + "_pin").c_str(), getTurnoutPin(i + 1));
-    turnout["type"] = preferences.getString(("turnout_" + String(i + 1) + "_type").c_str(), "turnout");
+  int turnoutCount = 0;
+  for (int i = 1; i <= 10; i++) {
+    String id = preferences.getString(("turnout_" + String(i) + "_id").c_str(), "");
+    if (id != "" && id != "NOT_FOUND") {
+      turnoutCount++;
+      JsonObject turnout = turnoutArray.createNestedObject();
+      turnout["turnout"] = i;
+      turnout["position"] = (i <= 2) ? (turnout_states[i-1] ? "THROWN" : "CLOSED") : "CLOSED";
+      turnout["label"] = preferences.getString(("turnout_" + String(i) + "_label").c_str(), ("Turnout " + String(i)).c_str());
+      turnout["id"] = id;
+      turnout["pin"] = preferences.getString(("turnout_" + String(i) + "_pin").c_str(), getTurnoutPin(i));
+      turnout["type"] = preferences.getString(("turnout_" + String(i) + "_type").c_str(), "turnout");
+    }
   }
   
-  // Add individual light states
+  // Add individual light states - dynamically count how many exist
   JsonArray lightArray = doc.createNestedArray("lights");
-  for (int i = 0; i < 6; i++) {
-    JsonObject light = lightArray.createNestedObject();
-    light["light"] = i + 1;
-    light["state"] = light_states[i] ? "ON" : "OFF";
-    light["label"] = preferences.getString(("light_" + String(i + 1) + "_label").c_str(), ("Light " + String(i + 1)).c_str());
-    light["id"] = preferences.getString(("light_" + String(i + 1) + "_id").c_str(), String(i + 1));
-    light["pin"] = preferences.getString(("light_" + String(i + 1) + "_pin").c_str(), getLightPin(i + 1));
-    light["type"] = preferences.getString(("light_" + String(i + 1) + "_type").c_str(), "light");
+  int lightCount = 0;
+  for (int i = 1; i <= 10; i++) {
+    String id = preferences.getString(("light_" + String(i) + "_id").c_str(), "");
+    if (id != "" && id != "NOT_FOUND") {
+      lightCount++;
+      JsonObject light = lightArray.createNestedObject();
+      light["light"] = i;
+      light["state"] = (i <= 6) ? (light_states[i-1] ? "ON" : "OFF") : "OFF";
+      light["label"] = preferences.getString(("light_" + String(i) + "_label").c_str(), ("Light " + String(i)).c_str());
+      light["id"] = id;
+      light["pin"] = preferences.getString(("light_" + String(i) + "_pin").c_str(), getLightPin(i));
+      light["type"] = preferences.getString(("light_" + String(i) + "_type").c_str(), "light");
+    }
   }
   
   // Add all pin configurations for the device table
@@ -2603,19 +2649,20 @@ void handleSaveDeviceSettings() {
     
     // Clear existing device-type mappings to avoid conflicts
     Serial.println("Clearing existing device-type mappings...");
-    for (int i = 1; i <= 4; i++) {
+    // Clear more aggressively to handle device type changes
+    for (int i = 1; i <= 10; i++) {
       preferences.remove(("sensor_" + String(i) + "_id").c_str());
       preferences.remove(("sensor_" + String(i) + "_label").c_str());
       preferences.remove(("sensor_" + String(i) + "_pin").c_str());
       preferences.remove(("sensor_" + String(i) + "_type").c_str());
     }
-    for (int i = 1; i <= 2; i++) {
+    for (int i = 1; i <= 10; i++) {
       preferences.remove(("turnout_" + String(i) + "_id").c_str());
       preferences.remove(("turnout_" + String(i) + "_label").c_str());
       preferences.remove(("turnout_" + String(i) + "_pin").c_str());
       preferences.remove(("turnout_" + String(i) + "_type").c_str());
     }
-    for (int i = 1; i <= 6; i++) {
+    for (int i = 1; i <= 10; i++) {
       preferences.remove(("light_" + String(i) + "_id").c_str());
       preferences.remove(("light_" + String(i) + "_label").c_str());
       preferences.remove(("light_" + String(i) + "_pin").c_str());
@@ -2627,6 +2674,38 @@ void handleSaveDeviceSettings() {
     int sensorCount = 0;
     int turnoutCount = 0;
     int lightCount = 0;
+    
+    // First pass: count devices by type to allocate proper numbers
+    Serial.println("=== First pass: Counting devices by type ===");
+    for (JsonPair device : device_settings) {
+      String deviceKey = device.key().c_str();
+      JsonObject deviceData = device.value();
+      
+      if (deviceKey.startsWith("pin_")) {
+        String deviceType = "unused";
+        if (deviceData.containsKey("type")) {
+          deviceType = deviceData["type"].as<String>();
+        }
+        
+        if (deviceType == "sensor") {
+          sensorCount++;
+          Serial.println("  Found sensor #" + String(sensorCount) + " on " + deviceKey);
+        } else if (deviceType == "turnout") {
+          turnoutCount++;
+          Serial.println("  Found turnout #" + String(turnoutCount) + " on " + deviceKey);
+        } else if (deviceType == "light") {
+          lightCount++;
+          Serial.println("  Found light #" + String(lightCount) + " on " + deviceKey);
+        }
+      }
+    }
+    
+    Serial.println("Device counts: " + String(sensorCount) + " sensors, " + String(turnoutCount) + " turnouts, " + String(lightCount) + " lights");
+    
+    // Reset counters for second pass
+    sensorCount = 0;
+    turnoutCount = 0;
+    lightCount = 0;
     
     for (JsonPair device : device_settings) {
       deviceCount++;
@@ -2651,9 +2730,9 @@ void handleSaveDeviceSettings() {
           
           Serial.println("  Device type: " + deviceType);
           
-          // Add error checking
-          if (deviceType.length() == 0) {
-            Serial.println("  ERROR: Device type is empty, skipping");
+          // Add error checking - only skip if type is actually empty or "unused"
+          if (deviceType.length() == 0 || deviceType == "unused") {
+            Serial.println("  ERROR: Device type is empty or unused, skipping");
             continue;
           }
           
@@ -2678,7 +2757,7 @@ void handleSaveDeviceSettings() {
           Serial.println("  Saved " + pinTypeKey + " = " + deviceType);
           
           // Now map pin settings to device-type settings for MQTT compatibility
-          if (deviceType == "sensor" && sensorCount < 4) {
+          if (deviceType == "sensor") {
             sensorCount++;
             String deviceIdKey = "sensor_" + String(sensorCount) + "_id";
             String deviceLabelKey = "sensor_" + String(sensorCount) + "_label";
@@ -2698,7 +2777,7 @@ void handleSaveDeviceSettings() {
             preferences.putString(deviceTypeKey.c_str(), deviceType);
             Serial.println("  Mapped to " + deviceTypeKey + " = " + deviceType);
             
-          } else if (deviceType == "turnout" && turnoutCount < 2) {
+          } else if (deviceType == "turnout") {
             turnoutCount++;
             String deviceIdKey = "turnout_" + String(turnoutCount) + "_id";
             String deviceLabelKey = "turnout_" + String(turnoutCount) + "_label";
@@ -2718,7 +2797,7 @@ void handleSaveDeviceSettings() {
             preferences.putString(deviceTypeKey.c_str(), deviceType);
             Serial.println("  Mapped to " + deviceTypeKey + " = " + deviceType);
             
-          } else if (deviceType == "light" && lightCount < 6) {
+          } else if (deviceType == "light") {
             lightCount++;
             String deviceIdKey = "light_" + String(lightCount) + "_id";
             String deviceLabelKey = "light_" + String(lightCount) + "_label";
@@ -2756,7 +2835,7 @@ void handleSaveDeviceSettings() {
     // Verify the device-type mappings were actually saved
     Serial.println("=== Verifying Device-Type Mappings ===");
     Serial.println("Sensors:");
-    for (int i = 1; i <= 4; i++) {
+    for (int i = 1; i <= sensorCount; i++) {
       String id = preferences.getString(("sensor_" + String(i) + "_id").c_str(), "NOT_FOUND");
       String label = preferences.getString(("sensor_" + String(i) + "_label").c_str(), "NOT_FOUND");
       String pin = preferences.getString(("sensor_" + String(i) + "_pin").c_str(), "NOT_FOUND");
@@ -2764,7 +2843,7 @@ void handleSaveDeviceSettings() {
     }
     
     Serial.println("Turnouts:");
-    for (int i = 1; i <= 2; i++) {
+    for (int i = 1; i <= turnoutCount; i++) {
       String id = preferences.getString(("turnout_" + String(i) + "_id").c_str(), "NOT_FOUND");
       String label = preferences.getString(("turnout_" + String(i) + "_label").c_str(), "NOT_FOUND");
       String pin = preferences.getString(("turnout_" + String(i) + "_pin").c_str(), "NOT_FOUND");
@@ -2772,7 +2851,7 @@ void handleSaveDeviceSettings() {
     }
     
     Serial.println("Lights:");
-    for (int i = 1; i <= 6; i++) {
+    for (int i = 1; i <= lightCount; i++) {
       String id = preferences.getString(("light_" + String(i) + "_id").c_str(), "NOT_FOUND");
       String label = preferences.getString(("light_" + String(i) + "_label").c_str(), "NOT_FOUND");
       String pin = preferences.getString(("light_" + String(i) + "_pin").c_str(), "NOT_FOUND");
@@ -2808,6 +2887,12 @@ void handleSaveDeviceSettings() {
     }
 
     Serial.println("Device settings saved successfully.");
+    
+    // Commit preferences to flash memory
+    Serial.println("Committing preferences to flash memory...");
+    preferences.end();
+    preferences.begin("jmri_client", false);
+    Serial.println("Preferences committed successfully to flash");
     
     // Reload MQTT credentials to update topic strings with new device IDs
     Serial.println("Reloading MQTT configuration to update topic strings...");
