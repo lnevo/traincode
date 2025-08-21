@@ -738,7 +738,7 @@ const char* getMainPageHTML() {
                 if (data.sensor_states) {
                     data.sensor_states.forEach(function(sensor, i) {
                         tableHtml += '<tr data-device-type="sensor" data-device-num="' + (i + 1) + '" data-pin="' + sensor.pin + '">';
-                        tableHtml += '<td><select class="device-type" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"><option value="unused">Unused</option><option value="sensor" selected>Sensor</option><option value="turnout">Turnout</option><option value="light">Light</option></select></td>';
+                        tableHtml += '<td><select class="device-type" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"><option value="sensor" selected>Sensor</option><option value="turnout">Turnout</option><option value="light">Light</option><option value="unused">Unused</option></select></td>';
                         tableHtml += '<td><input type="number" class="device-id" value="' + (sensor.id || (i + 1)) + '" min="1" max="99" style="width: 60px; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary); text-align: center;"></td>';
                         tableHtml += '<td>GPIO' + sensor.pin + '</td>';
                         tableHtml += '<td>Input Only</td>';
@@ -753,7 +753,7 @@ const char* getMainPageHTML() {
                 if (data.turnout_states) {
                     data.turnout_states.forEach(function(turnout, i) {
                         tableHtml += '<tr data-device-type="turnout" data-device-num="' + (i + 1) + '" data-pin="' + turnout.pin + '">';
-                        tableHtml += '<td><select class="device-type" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"><option value="unused">Unused</option><option value="sensor">Sensor</option><option value="turnout" selected>Turnout</option><option value="light">Light</option></select></td>';
+                        tableHtml += '<td><select class="device-type" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"><option value="turnout" selected>Turnout</option><option value="sensor">Sensor</option><option value="light">Light</option><option value="unused">Unused</option></select></td>';
                         tableHtml += '<td><input type="number" class="device-id" value="' + (turnout.id || (i + 1)) + '" min="1" max="99" style="width: 60px; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary); text-align: center;"></td>';
                         tableHtml += '<td>GPIO' + turnout.pin + '</td>';
                         tableHtml += '<td>Output Only</td>';
@@ -768,7 +768,7 @@ const char* getMainPageHTML() {
                 if (data.lights) {
                     data.lights.forEach(function(light, i) {
                         tableHtml += '<tr data-device-type="light" data-device-num="' + (i + 1) + '" data-pin="' + light.pin + '">';
-                        tableHtml += '<td><select class="device-type" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"><option value="unused">Unused</option><option value="sensor">Sensor</option><option value="turnout">Turnout</option><option value="light" selected>Light</option></select></td>';
+                        tableHtml += '<td><select class="device-type" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"><option value="light" selected>Light</option><option value="sensor">Sensor</option><option value="turnout">Turnout</option><option value="unused">Unused</option></select></td>';
                         tableHtml += '<td><input type="number" class="device-id" value="' + (light.id || (i + 1)) + '" min="1" max="99" style="width: 60px; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary); text-align: center;"></td>';
                         tableHtml += '<td>GPIO' + light.pin + '</td>';
                         tableHtml += '<td>Output + PWM</td>';
@@ -817,7 +817,7 @@ const char* getMainPageHTML() {
                 unusedPins.forEach(function(pin) {
                     const capabilities = pin.description || 'I/O';
                     tableHtml += '<tr data-device-type="unused" data-device-num="0" data-pin="' + pin.pin + '" style="opacity: 0.6;">';
-                    tableHtml += '<td><select class="device-type" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"><option value="unused">Unused</option><option value="sensor">Sensor</option>' + (capabilities.includes('Input') ? '' : '<option value="turnout">Turnout</option><option value="light">Light</option>') + '</select></td>';
+                    tableHtml += '<td><select class="device-type" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"><option value="sensor">Sensor</option>' + (capabilities.includes('Input') ? '' : '<option value="turnout">Turnout</option><option value="light">Light</option>') + '<option value="unused" selected>Unused</option></select></td>';
                     tableHtml += '<td><input type="number" class="device-id" value="" placeholder="ID" min="1" max="99" style="width: 60px; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary); text-align: center;"></td>';
                     tableHtml += '<td>GPIO' + pin.pin + '</td>';
                     tableHtml += '<td>' + capabilities + '</td>';
