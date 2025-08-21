@@ -521,7 +521,7 @@ const char* getMainPageHTML() {
                     </tbody>
                 </table>
                 <div style="text-align: left; margin-top: 20px;">
-                    <button id="saveDeviceSettings" style="background: var(--accent-primary); color: white; padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; font-size: 1em; transition: all 0.3s;">Save Device Settings</button>
+                    <button id="saveDeviceSettings" onclick="saveAllDeviceSettings()" style="background: var(--accent-primary); color: white; padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; font-size: 1em; transition: all 0.3s;">Save Device Settings</button>
                 </div>
             </div>
 
