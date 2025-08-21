@@ -247,13 +247,13 @@ unsigned long last_mqtt_attempt = 0;
 bool sensor_states[4] = {false, false, false, false};  // Changed from 3 to 4 sensors
 bool last_sensor_states[4] = {false, false, false, false};
 
-// Turnout states
-bool turnout_states[2] = {false, false};  // false = CLOSED, true = THROWN
-bool last_turnout_states[2] = {false, false};
+// Turnout states - support up to 10 turnouts
+bool turnout_states[10] = {false, false, false, false, false, false, false, false, false, false};  // false = CLOSED, true = THROWN
+bool last_turnout_states[10] = {false, false, false, false, false, false, false, false, false, false};
 
-// Global state variables for lights (6 individual lights)
-bool light_states[6] = {false, false, false, false, false, false};  // 6 individual lights
-bool last_light_states[6] = {false, false, false, false, false, false};
+// Global state variables for lights - support up to 10 lights
+bool light_states[10] = {false, false, false, false, false, false, false, false, false, false};  // 10 individual lights
+bool last_light_states[10] = {false, false, false, false, false, false, false, false, false, false};
 
 // Track recent publications to prevent feedback loops
 struct RecentPublication {
@@ -496,7 +496,19 @@ void setupPins() {
   
   digitalWrite(STATUS_LED, HIGH);  // Status LED ON
   
-  Serial.println("Pins configured for 2 turnouts, 6 individual lights, and 4 sensors");
+  Serial.println("Pins configured for up to 10 turnouts, up to 10 individual lights, and 4 sensors");
+}
+
+// Function to initialize pins dynamically when devices are assigned
+void initializeDevicePin(int pinNum, String deviceType) {
+  if (deviceType == "turnout" || deviceType == "light") {
+    pinMode(pinNum, OUTPUT);
+    digitalWrite(pinNum, LOW);  // Initialize to safe state
+    Serial.println("Initialized pin " + String(pinNum) + " as " + deviceType + " output");
+  } else if (deviceType == "sensor") {
+    pinMode(pinNum, INPUT_PULLUP);
+    Serial.println("Initialized pin " + String(pinNum) + " as sensor input with pullup");
+  }
 }
 
 void loadWiFiCredentials() {
@@ -1165,10 +1177,29 @@ void mqttReconnect() {
     }
     
     Serial.println("=== Current States After MQTT Sync ===");
-    Serial.println("Turnout 1: " + String(turnout_states[0] ? "THROWN" : "CLOSED"));
-    Serial.println("Turnout 2: " + String(turnout_states[1] ? "THROWN" : "CLOSED"));
+    // Display turnout states - support up to 10 turnouts
+    for (int i = 0; i < 10; i++) {
+      if (i < 2) {
+        // For turnouts 1-2, show individual status
+        Serial.println("Turnout " + String(i + 1) + ": " + String(turnout_states[i] ? "THROWN" : "CLOSED"));
+      } else if (turnout_states[i]) {
+        // For turnouts 3-10, only show if they have a state
+        Serial.println("Turnout " + String(i + 1) + ": " + String(turnout_states[i] ? "THROWN" : "CLOSED"));
+      }
+    }
     Serial.println("Turnouts: " + String(turnout_states[0] ? "THROWN" : "CLOSED") + " / " + String(turnout_states[1] ? "THROWN" : "CLOSED"));
-    Serial.println("Lights: " + String(light_states[0] ? "ON" : "OFF") + " " + String(light_states[1] ? "ON" : "OFF") + " " + String(light_states[2] ? "ON" : "OFF") + " " + String(light_states[3] ? "ON" : "OFF") + " " + String(light_states[4] ? "ON" : "OFF") + " " + String(light_states[5] ? "ON" : "OFF"));
+    // Display light states - support up to 10 lights
+    String lightStates = "Lights: ";
+    for (int i = 0; i < 10; i++) {
+      if (i < 6) {
+        // For lights 1-6, always show status
+        lightStates += String(light_states[i] ? "ON" : "OFF") + " ";
+      } else if (light_states[i]) {
+        // For lights 7-10, only show if they have a state
+        lightStates += String(light_states[i] ? "ON" : "OFF") + " ";
+      }
+    }
+    Serial.println(lightStates);
     Serial.println("=====================================");
     
     // Skip initial status publish - we now sync from retained messages
@@ -1289,8 +1320,8 @@ void handleTurnoutControl(String topic, String payload) {
     }
   }
   
-  // Validate turnout number
-  if (physical_turnout < 1 || physical_turnout > 2) {
+  // Validate turnout number - support up to 10 turnouts
+  if (physical_turnout < 1 || physical_turnout > 10) {
     Serial.println("❌ Error: Invalid turnout ID: " + turnout_id_str);
     Serial.println("No physical turnout found with this ID");
     Serial.println("=====================");
@@ -1314,14 +1345,16 @@ void handleTurnoutControl(String topic, String payload) {
     if (turnout_states[turnout_num] != true) {  // Only change if state is different
       state_changed = true;
     
-    if (turnout_num == 0) {
-        digitalWrite(TURNOUT_PIN_1, HIGH);
-        turnout_states[0] = true;
-        Serial.println("✅ Turnout 1 pin " + String(TURNOUT_PIN_1) + " set to HIGH");
-    } else if (turnout_num == 1) {
-        digitalWrite(TURNOUT_PIN_2, HIGH);
-        turnout_states[1] = true;
-        Serial.println("✅ Turnout 2 pin " + String(TURNOUT_PIN_2) + " set to HIGH");
+      // Get the pin for this turnout dynamically
+      String turnoutPin = getTurnoutPin(physical_turnout);
+      if (turnoutPin != "N/A") {
+        int pinNum = turnoutPin.toInt();
+        digitalWrite(pinNum, HIGH);
+        turnout_states[turnout_num] = true;
+        Serial.println("✅ Turnout " + String(physical_turnout) + " pin " + String(pinNum) + " set to HIGH");
+      } else {
+        Serial.println("❌ Error: No pin configured for turnout " + String(physical_turnout));
+        return;
       }
       
       Serial.println("✅ Turnout " + String(turnout_num + 1) + " moved to THROWN");
@@ -1335,14 +1368,16 @@ void handleTurnoutControl(String topic, String payload) {
     if (turnout_states[turnout_num] != false) {  // Only change if state is different
       state_changed = true;
       
-      if (turnout_num == 0) {
-        digitalWrite(TURNOUT_PIN_1, LOW);
-        turnout_states[0] = false;
-        Serial.println("✅ Turnout 1 pin " + String(TURNOUT_PIN_1) + " set to LOW");
-      } else if (turnout_num == 1) {
-        digitalWrite(TURNOUT_PIN_2, LOW);
-        turnout_states[1] = false;
-        Serial.println("✅ Turnout 2 pin " + String(TURNOUT_PIN_2) + " set to LOW");
+      // Get the pin for this turnout dynamically
+      String turnoutPin = getTurnoutPin(physical_turnout);
+      if (turnoutPin != "N/A") {
+        int pinNum = turnoutPin.toInt();
+        digitalWrite(pinNum, LOW);
+        turnout_states[turnout_num] = false;
+        Serial.println("✅ Turnout " + String(physical_turnout) + " pin " + String(pinNum) + " set to LOW");
+      } else {
+        Serial.println("❌ Error: No pin configured for turnout " + String(physical_turnout));
+        return;
       }
       
       Serial.println("✅ Turnout " + String(turnout_num + 1) + " moved to CLOSED");
@@ -1353,10 +1388,19 @@ void handleTurnoutControl(String topic, String payload) {
   } else if (payload == "toggle") {
     // Toggle the current state
     turnout_states[turnout_num] = !turnout_states[turnout_num];
-    digitalWrite(turnout_num == 0 ? TURNOUT_PIN_1 : TURNOUT_PIN_2, turnout_states[turnout_num] ? HIGH : LOW);
-    String newState = turnout_states[turnout_num] ? "THROWN" : "CLOSED";
-    Serial.println("Turnout " + String(turnout_num + 1) + " toggled to " + newState);
-    state_changed = true;
+    
+    // Get the pin for this turnout dynamically
+    String turnoutPin = getTurnoutPin(physical_turnout);
+    if (turnoutPin != "N/A") {
+      int pinNum = turnoutPin.toInt();
+      digitalWrite(pinNum, turnout_states[turnout_num] ? HIGH : LOW);
+      String newState = turnout_states[turnout_num] ? "THROWN" : "CLOSED";
+      Serial.println("Turnout " + String(physical_turnout) + " toggled to " + newState);
+      state_changed = true;
+    } else {
+      Serial.println("❌ Error: No pin configured for turnout " + String(physical_turnout));
+      return;
+    }
   } else {
     Serial.println("❌ Unknown position specified in turnout control message: " + payload);
     Serial.println("=====================");
@@ -1825,7 +1869,7 @@ void handleStatus() {
       turnoutCount++;
       JsonObject turnout = turnoutArray.createNestedObject();
       turnout["turnout"] = i;
-      turnout["position"] = (i <= 2) ? (turnout_states[i-1] ? "THROWN" : "CLOSED") : "CLOSED";
+      turnout["position"] = (i <= 10) ? (turnout_states[i-1] ? "THROWN" : "CLOSED") : "CLOSED";
       turnout["label"] = preferences.getString(("turnout_" + String(i) + "_label").c_str(), ("Turnout " + String(i)).c_str());
       turnout["id"] = id;
       turnout["pin"] = preferences.getString(("turnout_" + String(i) + "_pin").c_str(), getTurnoutPin(i));
@@ -1842,7 +1886,7 @@ void handleStatus() {
       lightCount++;
       JsonObject light = lightArray.createNestedObject();
       light["light"] = i;
-      light["state"] = (i <= 6) ? (light_states[i-1] ? "ON" : "OFF") : "OFF";
+      light["state"] = (i <= 10) ? (light_states[i-1] ? "ON" : "OFF") : "OFF";
       light["label"] = preferences.getString(("light_" + String(i) + "_label").c_str(), ("Light " + String(i)).c_str());
       light["id"] = id;
       light["pin"] = preferences.getString(("light_" + String(i) + "_pin").c_str(), getLightPin(i));
@@ -1878,16 +1922,20 @@ void handleStatus() {
         isActive = true;
       }
     } else if (deviceType == "turnout") {
-      // Check if this pin matches any turnout pin
-      if (String(pinNum) == getTurnoutPin(1) || String(pinNum) == getTurnoutPin(2)) {
-        isActive = true;
+      // Check if this pin matches any turnout pin - support up to 10 turnouts
+      for (int i = 1; i <= 10; i++) {
+        if (String(pinNum) == getTurnoutPin(i)) {
+          isActive = true;
+          break;
+        }
       }
     } else if (deviceType == "light") {
-      // Check if this pin matches any light pin
-      if (String(pinNum) == getLightPin(1) || String(pinNum) == getLightPin(2) || 
-          String(pinNum) == getLightPin(3) || String(pinNum) == getLightPin(4) ||
-          String(pinNum) == getLightPin(5) || String(pinNum) == getLightPin(6)) {
-        isActive = true;
+      // Check if this pin matches any light pin - support up to 10 lights
+      for (int i = 1; i <= 10; i++) {
+        if (String(pinNum) == getLightPin(i)) {
+          isActive = true;
+          break;
+        }
       }
     }
     
@@ -1920,23 +1968,31 @@ void handleDeviceControl() {
   Serial.println("Action: " + action);
   
   if (type == "turnout") {
-    if (number < 1 || number > 2) {
+    if (number < 1 || number > 10) {
       web_server.send(400, "text/plain", "Invalid turnout number");
       return;
     }
     
+    // Get the pin for this turnout dynamically
+    String turnoutPin = getTurnoutPin(number);
+    if (turnoutPin == "N/A") {
+      web_server.send(400, "text/plain", "No pin configured for turnout " + String(number));
+      return;
+    }
+    int pinNum = turnoutPin.toInt();
+    
     if (action == "THROWN") {
       turnout_states[number - 1] = true;
-      digitalWrite(number == 1 ? TURNOUT_PIN_1 : TURNOUT_PIN_2, HIGH);
+      digitalWrite(pinNum, HIGH);
       Serial.println("Turnout " + String(number) + " set to THROWN");
     } else if (action == "CLOSED") {
       turnout_states[number - 1] = false;
-      digitalWrite(number == 1 ? TURNOUT_PIN_1 : TURNOUT_PIN_2, LOW);
+      digitalWrite(pinNum, LOW);
       Serial.println("Turnout " + String(number) + " set to CLOSED");
     } else if (action == "toggle") {
       // Toggle the current state
       turnout_states[number - 1] = !turnout_states[number - 1];
-      digitalWrite(number == 1 ? TURNOUT_PIN_1 : TURNOUT_PIN_2, turnout_states[number - 1] ? HIGH : LOW);
+      digitalWrite(pinNum, turnout_states[number - 1] ? HIGH : LOW);
       String newState = turnout_states[number - 1] ? "THROWN" : "CLOSED";
       Serial.println("Turnout " + String(number) + " toggled to " + newState);
     } else {
@@ -1949,39 +2005,24 @@ void handleDeviceControl() {
     Serial.println("State change from web GUI - published to MQTT for JMRI awareness");
     
   } else if (type == "light") {
-    // Handle light control for signal heads
-    if (number < 1 || number > 6) {
+    // Handle light control for signal heads - support up to 10 lights
+    if (number < 1 || number > 10) {
       web_server.send(400, "text/plain", "Invalid light number");
       return;
     }
     
-    // Toggle the light state
-    bool newState = false;
-    if (number == 1) {
-      light_states[0] = !light_states[0];
-      newState = light_states[0];
-      digitalWrite(LIGHT_PIN_1, newState ? HIGH : LOW);
-    } else if (number == 2) {
-      light_states[1] = !light_states[1];
-      newState = light_states[1];
-      digitalWrite(LIGHT_PIN_2, newState ? HIGH : LOW);
-    } else if (number == 3) {
-      light_states[2] = !light_states[2];
-      newState = light_states[2];
-      digitalWrite(LIGHT_PIN_3, newState ? HIGH : LOW);
-    } else if (number == 4) {
-      light_states[3] = !light_states[3];
-      newState = light_states[3];
-      digitalWrite(LIGHT_PIN_4, newState ? HIGH : LOW);
-    } else if (number == 5) {
-      light_states[4] = !light_states[4];
-      newState = light_states[4];
-      digitalWrite(LIGHT_PIN_5, newState ? HIGH : LOW);
-    } else if (number == 6) {
-      light_states[5] = !light_states[5];
-      newState = light_states[5];
-      digitalWrite(LIGHT_PIN_6, newState ? HIGH : LOW);
+    // Get the pin for this light dynamically
+    String lightPin = getLightPin(number);
+    if (lightPin == "N/A") {
+      web_server.send(400, "text/plain", "No pin configured for light " + String(number));
+      return;
     }
+    int pinNum = lightPin.toInt();
+    
+    // Toggle the light state
+    light_states[number - 1] = !light_states[number - 1];
+    bool newState = light_states[number - 1];
+    digitalWrite(pinNum, newState ? HIGH : LOW);
     
     Serial.println("Light " + String(number) + " toggled to " + (newState ? "ON" : "OFF"));
     
@@ -2184,8 +2225,8 @@ void handleBackup() {
     sensor["type"] = preferences.getString(("sensor_" + String(i) + "_type").c_str(), "sensor");
   }
   
-  // Turnout settings
-  for (int i = 1; i <= 2; i++) {
+  // Turnout settings - support up to 10 turnouts
+  for (int i = 1; i <= 10; i++) {
     JsonObject turnout = device_settings.createNestedObject("turnout_" + String(i));
     turnout["label"] = preferences.getString(("turnout_" + String(i) + "_label").c_str(), "Turnout " + String(i));
     turnout["id"] = preferences.getString(("turnout_" + String(i) + "_id").c_str(), String(i));
@@ -2193,8 +2234,8 @@ void handleBackup() {
     turnout["type"] = preferences.getString(("turnout_" + String(i) + "_type").c_str(), "turnout");
   }
   
-  // Light settings
-  for (int i = 1; i <= 6; i++) {
+  // Light settings - support up to 10 lights
+  for (int i = 1; i <= 10; i++) {
     JsonObject light = device_settings.createNestedObject("light_" + String(i));
     light["label"] = preferences.getString(("light_" + String(i) + "_label").c_str(), "Light " + String(i));
     light["id"] = preferences.getString(("light_" + String(i) + "_id").c_str(), String(i));
@@ -2288,8 +2329,8 @@ void handleRestore() {
         }
       }
       
-      // Restore turnout settings
-      for (int i = 1; i <= 2; i++) {
+      // Restore turnout settings - support up to 10 turnouts
+      for (int i = 1; i <= 10; i++) {
         String turnout_key = "turnout_" + String(i);
         if (device_settings.containsKey(turnout_key)) {
           JsonObject turnout = device_settings[turnout_key];
@@ -2300,8 +2341,8 @@ void handleRestore() {
         }
       }
       
-      // Restore light settings
-      for (int i = 1; i <= 6; i++) {
+      // Restore light settings - support up to 10 lights
+      for (int i = 1; i <= 10; i++) {
         String light_key = "light_" + String(i);
         if (device_settings.containsKey(light_key)) {
           JsonObject light = device_settings[light_key];
@@ -2356,17 +2397,21 @@ void handleRestore() {
       if (device_labels.containsKey("sensor_3")) preferences.putString("sensor_label_3", device_labels["sensor_3"].as<String>());
       if (device_labels.containsKey("sensor_4")) preferences.putString("sensor_label_4", device_labels["sensor_4"].as<String>());
       
-      // Restore turnout labels
-      if (device_labels.containsKey("turnout_1")) preferences.putString("turnout_label_1", device_labels["turnout_1"].as<String>());
-      if (device_labels.containsKey("turnout_2")) preferences.putString("turnout_label_2", device_labels["turnout_2"].as<String>());
+      // Restore turnout labels - support up to 10 turnouts
+      for (int i = 1; i <= 10; i++) {
+        String key = "turnout_" + String(i);
+        if (device_labels.containsKey(key)) {
+          preferences.putString(("turnout_label_" + String(i)).c_str(), device_labels[key].as<String>());
+        }
+      }
       
-      // Restore light labels
-      if (device_labels.containsKey("light_1")) preferences.putString("light_label_1", device_labels["light_1"].as<String>());
-      if (device_labels.containsKey("light_2")) preferences.putString("light_label_2", device_labels["light_2"].as<String>());
-      if (device_labels.containsKey("light_3")) preferences.putString("light_label_3", device_labels["light_3"].as<String>());
-      if (device_labels.containsKey("light_4")) preferences.putString("light_label_4", device_labels["light_4"].as<String>());
-      if (device_labels.containsKey("light_5")) preferences.putString("light_label_5", device_labels["light_5"].as<String>());
-      if (device_labels.containsKey("light_6")) preferences.putString("light_label_6", device_labels["light_6"].as<String>());
+      // Restore light labels - support up to 10 lights
+      for (int i = 1; i <= 10; i++) {
+        String key = "light_" + String(i);
+        if (device_labels.containsKey(key)) {
+          preferences.putString(("light_label_" + String(i)).c_str(), device_labels[key].as<String>());
+        }
+      }
     }
     
     // After restoring all settings, rebuild the device-type mappings for MQTT compatibility
@@ -2403,14 +2448,20 @@ void handleSaveDeviceLabels() {
     if (device_labels.containsKey("sensor_2")) preferences.putString("sensor_label_2", device_labels["sensor_2"].as<String>());
     if (device_labels.containsKey("sensor_3")) preferences.putString("sensor_label_3", device_labels["sensor_3"].as<String>());
     if (device_labels.containsKey("sensor_4")) preferences.putString("sensor_label_4", device_labels["sensor_4"].as<String>());
-    if (device_labels.containsKey("turnout_1")) preferences.putString("turnout_label_1", device_labels["turnout_1"].as<String>());
-    if (device_labels.containsKey("turnout_2")) preferences.putString("turnout_label_2", device_labels["turnout_2"].as<String>());
-    if (device_labels.containsKey("light_1")) preferences.putString("light_label_1", device_labels["light_1"].as<String>());
-    if (device_labels.containsKey("light_2")) preferences.putString("light_label_2", device_labels["light_2"].as<String>());
-    if (device_labels.containsKey("light_3")) preferences.putString("light_label_3", device_labels["light_3"].as<String>());
-    if (device_labels.containsKey("light_4")) preferences.putString("light_label_4", device_labels["light_4"].as<String>());
-    if (device_labels.containsKey("light_5")) preferences.putString("light_label_5", device_labels["light_5"].as<String>());
-    if (device_labels.containsKey("light_6")) preferences.putString("light_label_6", device_labels["light_6"].as<String>());
+    // Save turnout labels - support up to 10 turnouts
+    for (int i = 1; i <= 10; i++) {
+      String key = "turnout_" + String(i);
+      if (device_labels.containsKey(key)) {
+        preferences.putString(("turnout_label_" + String(i)).c_str(), device_labels[key].as<String>());
+      }
+    }
+    // Save light labels - support up to 10 lights
+    for (int i = 1; i <= 10; i++) {
+      String key = "light_" + String(i);
+      if (device_labels.containsKey(key)) {
+        preferences.putString(("light_label_" + String(i)).c_str(), device_labels[key].as<String>());
+      }
+    }
 
     Serial.println("Device labels saved successfully.");
     web_server.send(200, "text/plain", "Device labels saved successfully.");
@@ -2492,14 +2543,21 @@ String getSensorPin(int sensorNum) {
 }
 
 String getTurnoutPin(int turnoutNum) {
+  // For turnouts 1-2, use hardcoded pins
   switch(turnoutNum) {
     case 1: return String(TURNOUT_PIN_1);
     case 2: return String(TURNOUT_PIN_2);
-    default: return "N/A";
+    default: 
+      // For turnouts 3-10, get pin from preferences
+      if (turnoutNum >= 3 && turnoutNum <= 10) {
+        return preferences.getString(("turnout_" + String(turnoutNum) + "_pin").c_str(), "N/A");
+      }
+      return "N/A";
   }
 }
 
 String getLightPin(int lightNum) {
+  // For lights 1-6, use hardcoded pins
   switch(lightNum) {
     case 1: return String(LIGHT_PIN_1);
     case 2: return String(LIGHT_PIN_2);
@@ -2507,7 +2565,12 @@ String getLightPin(int lightNum) {
     case 4: return String(LIGHT_PIN_4);
     case 5: return String(LIGHT_PIN_5);
     case 6: return String(LIGHT_PIN_6);
-    default: return "N/A";
+    default: 
+      // For lights 7-10, get pin from preferences
+      if (lightNum >= 7 && lightNum <= 10) {
+        return preferences.getString(("light_" + String(lightNum) + "_pin").c_str(), "N/A");
+      }
+      return "N/A";
   }
 }
 
@@ -2524,13 +2587,13 @@ void rebuildDeviceTypeMappings() {
     preferences.remove(("sensor_" + String(i) + "_pin").c_str());
     preferences.remove(("sensor_" + String(i) + "_type").c_str());
   }
-  for (int i = 1; i <= 2; i++) {
+  for (int i = 1; i <= 10; i++) {
     preferences.remove(("turnout_" + String(i) + "_id").c_str());
     preferences.remove(("turnout_" + String(i) + "_label").c_str());
     preferences.remove(("turnout_" + String(i) + "_pin").c_str());
     preferences.remove(("turnout_" + String(i) + "_type").c_str());
   }
-  for (int i = 1; i <= 6; i++) {
+  for (int i = 1; i <= 10; i++) {
     preferences.remove(("light_" + String(i) + "_id").c_str());
     preferences.remove(("light_" + String(i) + "_label").c_str());
     preferences.remove(("light_" + String(i) + "_pin").c_str());
@@ -2566,7 +2629,7 @@ void rebuildDeviceTypeMappings() {
       
       Serial.println("  Mapped: " + deviceIdKey + " = " + id);
       
-    } else if (deviceType == "turnout" && turnoutCount < 2) {
+    } else if (deviceType == "turnout" && turnoutCount < 10) {
       turnoutCount++;
       String deviceIdKey = "turnout_" + String(turnoutCount) + "_id";
       String deviceLabelKey = "turnout_" + String(turnoutCount) + "_label";
@@ -2585,7 +2648,7 @@ void rebuildDeviceTypeMappings() {
       
       Serial.println("  Mapped: " + deviceIdKey + " = " + id);
       
-    } else if (deviceType == "light" && lightCount < 6) {
+    } else if (deviceType == "light" && lightCount < 10) {
       lightCount++;
       String deviceIdKey = "light_" + String(lightCount) + "_id";
       String deviceLabelKey = "light_" + String(lightCount) + "_label";
@@ -2755,6 +2818,9 @@ void handleSaveDeviceSettings() {
           String pinTypeKey = "pin_" + String(pinNum) + "_type";
           preferences.putString(pinTypeKey.c_str(), deviceType);
           Serial.println("  Saved " + pinTypeKey + " = " + deviceType);
+          
+          // Initialize the pin for the device type
+          initializeDevicePin(pinNum, deviceType);
           
           // Now map pin settings to device-type settings for MQTT compatibility
           if (deviceType == "sensor") {
