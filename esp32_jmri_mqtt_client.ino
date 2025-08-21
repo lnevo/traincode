@@ -243,9 +243,9 @@ bool mqtt_connected = false;
 unsigned long last_mqtt_attempt = 0;
 // Removed periodic status publishing - only publish on state changes
 
-// Sensor states
-bool sensor_states[4] = {false, false, false, false};  // Changed from 3 to 4 sensors
-bool last_sensor_states[4] = {false, false, false, false};
+// Sensor states - support up to 10 sensors
+bool sensor_states[10] = {false, false, false, false, false, false, false, false, false, false};  // 10 sensors
+bool last_sensor_states[10] = {false, false, false, false, false, false, false, false, false, false};
 
 // Turnout states - support up to 10 turnouts
 bool turnout_states[10] = {false, false, false, false, false, false, false, false, false, false};  // false = CLOSED, true = THROWN
@@ -361,6 +361,9 @@ void setup() {
   // Initialize pins
   setupPins();
   
+  // Initialize any previously configured device pins
+  initializeDevicePinsFromPreferences();
+  
   // Initialize SPIFFS
   if (!SPIFFS.begin(true)) {
     Serial.println("SPIFFS initialization failed");
@@ -461,42 +464,13 @@ void loop() {
 }
 
 void setupPins() {
-  // Configure turnout pins as outputs
-  pinMode(TURNOUT_PIN_1, OUTPUT);
-  pinMode(TURNOUT_PIN_2, OUTPUT);
-  
-  // Configure individual light pins as outputs
-  pinMode(LIGHT_PIN_1, OUTPUT);
-  pinMode(LIGHT_PIN_2, OUTPUT);
-  pinMode(LIGHT_PIN_3, OUTPUT);
-  pinMode(LIGHT_PIN_4, OUTPUT);
-  pinMode(LIGHT_PIN_5, OUTPUT);
-  pinMode(LIGHT_PIN_6, OUTPUT);
-  
-  // Configure sensor pins as inputs with pull-up resistors
-  pinMode(SENSOR_PIN_1, INPUT_PULLUP);
-  pinMode(SENSOR_PIN_2, INPUT_PULLUP);
-  pinMode(SENSOR_PIN_3, INPUT_PULLUP);
-  pinMode(SENSOR_PIN_4, INPUT_PULLUP);
-  
   // Configure status LED
   pinMode(STATUS_LED, OUTPUT);
-  
-  // Set initial states
-  digitalWrite(TURNOUT_PIN_1, LOW);   // CLOSED
-  digitalWrite(TURNOUT_PIN_2, LOW);   // CLOSED
-  
-  // Set all lights to OFF initially
-  digitalWrite(LIGHT_PIN_1, LOW);
-  digitalWrite(LIGHT_PIN_2, LOW);
-  digitalWrite(LIGHT_PIN_3, LOW);
-  digitalWrite(LIGHT_PIN_4, LOW);
-  digitalWrite(LIGHT_PIN_5, LOW);
-  digitalWrite(LIGHT_PIN_6, LOW);
-  
   digitalWrite(STATUS_LED, HIGH);  // Status LED ON
   
-  Serial.println("Pins configured for up to 10 turnouts, up to 10 individual lights, and 4 sensors");
+  Serial.println("Pins will be configured dynamically as devices are assigned");
+  Serial.println("System supports up to 10 turnouts, up to 10 individual lights, and up to 10 sensors");
+  Serial.println("All device pins must be configured through the web interface before use");
 }
 
 // Function to initialize pins dynamically when devices are assigned
@@ -509,6 +483,45 @@ void initializeDevicePin(int pinNum, String deviceType) {
     pinMode(pinNum, INPUT_PULLUP);
     Serial.println("Initialized pin " + String(pinNum) + " as sensor input with pullup");
   }
+}
+
+// Function to initialize all device pins from saved preferences at boot
+void initializeDevicePinsFromPreferences() {
+  Serial.println("=== Initializing Device Pins from Preferences ===");
+  
+  // Initialize sensor pins
+  for (int i = 1; i <= 10; i++) {
+    String pinStr = preferences.getString(("sensor_" + String(i) + "_pin").c_str(), "");
+    if (pinStr != "" && pinStr != "N/A") {
+      int pinNum = pinStr.toInt();
+      pinMode(pinNum, INPUT_PULLUP);
+      Serial.println("Initialized sensor " + String(i) + " on pin " + String(pinNum));
+    }
+  }
+  
+  // Initialize turnout pins
+  for (int i = 1; i <= 10; i++) {
+    String pinStr = preferences.getString(("turnout_" + String(i) + "_pin").c_str(), "");
+    if (pinStr != "" && pinStr != "N/A") {
+      int pinNum = pinStr.toInt();
+      pinMode(pinNum, OUTPUT);
+      digitalWrite(pinNum, LOW);  // Start in CLOSED position
+      Serial.println("Initialized turnout " + String(i) + " on pin " + String(pinNum) + " (CLOSED)");
+    }
+  }
+  
+  // Initialize light pins
+  for (int i = 1; i <= 10; i++) {
+    String pinStr = preferences.getString(("light_" + String(i) + "_pin").c_str(), "");
+    if (pinStr != "" && pinStr != "N/A") {
+      int pinNum = pinStr.toInt();
+      pinMode(pinNum, OUTPUT);
+      digitalWrite(pinNum, LOW);  // Start in OFF state
+      Serial.println("Initialized light " + String(i) + " on pin " + String(pinNum) + " (OFF)");
+    }
+  }
+  
+  Serial.println("=== Device Pin Initialization Complete ===");
 }
 
 void loadWiFiCredentials() {
@@ -798,7 +811,7 @@ void setupWebServer() {
       // Now test if the light control can find this ID
       response += "\n=== Testing Light Control Mapping ===\n";
       bool found = false;
-      for (int i = 1; i <= 6; i++) {
+      for (int i = 1; i <= 10; i++) {
         String stored_id = preferences.getString(("light_" + String(i) + "_id").c_str(), String(i));
         if (stored_id == customId) {
           response += "Light control found custom ID '" + customId + "' maps to physical light " + String(i) + "\n";
@@ -876,7 +889,7 @@ void setupWebServer() {
     // Also show what's actually in the preferences for comparison
     response += "\n=== Raw Preferences Values ===\n";
     response += "Sensors:\n";
-    for (int i = 1; i <= 4; i++) {
+    for (int i = 1; i <= 10; i++) {
       String id = preferences.getString(("sensor_" + String(i) + "_id").c_str(), "NOT_FOUND");
       String label = preferences.getString(("sensor_" + String(i) + "_label").c_str(), "NOT_FOUND");
       String pin = preferences.getString(("sensor_" + String(i) + "_pin").c_str(), "NOT_FOUND");
@@ -903,7 +916,7 @@ void setupWebServer() {
     }
     
     response += "\nLights:\n";
-    for (int i = 1; i <= 6; i++) {
+    for (int i = 1; i <= 10; i++) {
       String id = preferences.getString(("light_" + String(i) + "_id").c_str(), "NOT_FOUND");
       String label = preferences.getString(("light_" + String(i) + "_label").c_str(), "NOT_FOUND");
       String pin = preferences.getString(("light_" + String(i) + "_pin").c_str(), "NOT_FOUND");
@@ -920,7 +933,7 @@ void setupWebServer() {
     
     // Check for sensor settings
     response += "Sensors:\n";
-    for (int i = 1; i <= 4; i++) {
+    for (int i = 1; i <= 10; i++) {
       String id_key = "sensor_" + String(i) + "_id";
       String pin_key = "sensor_" + String(i) + "_pin";
       String label_key = "sensor_" + String(i) + "_label";
@@ -936,7 +949,7 @@ void setupWebServer() {
     }
     
     response += "\nTurnouts:\n";
-    for (int i = 1; i <= 2; i++) {
+    for (int i = 1; i <= 10; i++) {
       String id_key = "turnout_" + String(i) + "_id";
       String pin_key = "turnout_" + String(i) + "_pin";
       String label_key = "turnout_" + String(i) + "_label";
@@ -952,7 +965,7 @@ void setupWebServer() {
     }
     
     response += "\nLights:\n";
-    for (int i = 1; i <= 6; i++) {
+    for (int i = 1; i <= 10; i++) {
       String id_key = "light_" + String(i) + "_id";
       String pin_key = "light_" + String(i) + "_pin";
       String label_key = "light_" + String(i) + "_label";
@@ -1179,23 +1192,14 @@ void mqttReconnect() {
     Serial.println("=== Current States After MQTT Sync ===");
     // Display turnout states - support up to 10 turnouts
     for (int i = 0; i < 10; i++) {
-      if (i < 2) {
-        // For turnouts 1-2, show individual status
-        Serial.println("Turnout " + String(i + 1) + ": " + String(turnout_states[i] ? "THROWN" : "CLOSED"));
-      } else if (turnout_states[i]) {
-        // For turnouts 3-10, only show if they have a state
+      if (turnout_states[i]) {
         Serial.println("Turnout " + String(i + 1) + ": " + String(turnout_states[i] ? "THROWN" : "CLOSED"));
       }
     }
-    Serial.println("Turnouts: " + String(turnout_states[0] ? "THROWN" : "CLOSED") + " / " + String(turnout_states[1] ? "THROWN" : "CLOSED"));
     // Display light states - support up to 10 lights
     String lightStates = "Lights: ";
     for (int i = 0; i < 10; i++) {
-      if (i < 6) {
-        // For lights 1-6, always show status
-        lightStates += String(light_states[i] ? "ON" : "OFF") + " ";
-      } else if (light_states[i]) {
-        // For lights 7-10, only show if they have a state
+      if (light_states[i]) {
         lightStates += String(light_states[i] ? "ON" : "OFF") + " ";
       }
     }
@@ -1292,10 +1296,13 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     Serial.println("🎯 Processing sensor verification message");
     Serial.println("  Sensor topic detected: " + topic_str);
     Serial.println("  Payload: " + payload_str);
-    Serial.println("  Current sensor states:");
-    for (int i = 0; i < 4; i++) {  // Changed from 3 to 4 sensors
-      Serial.println("    Sensor " + String(i+1) + ": " + String(sensor_states[i] ? "ACTIVE" : "INACTIVE"));
-    }
+          Serial.println("  Current sensor states:");
+      // Display sensor states - support up to 10 sensors
+      for (int i = 0; i < 10; i++) {
+        if (sensor_states[i]) {
+          Serial.println("    Sensor " + String(i+1) + ": " + String(sensor_states[i] ? "ACTIVE" : "INACTIVE"));
+        }
+      }
     handleSensorVerification(topic_str, payload_str);
   }
 }
@@ -1312,7 +1319,7 @@ void handleTurnoutControl(String topic, String payload) {
   
   // Find which physical turnout this ID maps to
   int physical_turnout = 0;
-  for (int i = 1; i <= 2; i++) {
+  for (int i = 1; i <= 10; i++) {
     String stored_id = preferences.getString(("turnout_" + String(i) + "_id").c_str(), String(i));
     if (stored_id == turnout_id_str) {
       physical_turnout = i;
@@ -1439,7 +1446,7 @@ void handleLightControl(String topic, String payload) {
   
   // Find which physical light this ID maps to
   int physical_light = 0;
-  for (int i = 1; i <= 6; i++) {
+  for (int i = 1; i <= 10; i++) {
     String stored_id = preferences.getString(("light_" + String(i) + "_id").c_str(), String(i));
     if (stored_id == light_id_str) {
       physical_light = i;
@@ -1447,8 +1454,8 @@ void handleLightControl(String topic, String payload) {
     }
   }
   
-  // Validate light number
-  if (physical_light < 1 || physical_light > 6) {
+  // Validate light number - support up to 10 lights
+  if (physical_light < 1 || physical_light > 10) {
     Serial.println("❌ Error: Invalid light ID: " + light_id_str);
     Serial.println("No physical light found with this ID");
     Serial.println("=====================");
@@ -1519,7 +1526,7 @@ void handleSensorVerification(String topic, String payload) {
   
   // Find which physical sensor this ID maps to
   int physical_sensor = 0;
-  for (int i = 1; i <= 4; i++) {
+  for (int i = 1; i <= 10; i++) {
     String stored_id = preferences.getString(("sensor_" + String(i) + "_id").c_str(), String(i));
     if (stored_id == sensor_id_str) {
       physical_sensor = i;
@@ -1527,8 +1534,8 @@ void handleSensorVerification(String topic, String payload) {
     }
   }
   
-  // Validate sensor number
-  if (physical_sensor < 1 || physical_sensor > 4) {
+  // Validate sensor number - support up to 10 sensors
+  if (physical_sensor < 1 || physical_sensor > 10) {
     Serial.println("❌ Error: Invalid sensor ID: " + sensor_id_str);
     Serial.println("No physical sensor found with this ID");
     Serial.println("=====================");
@@ -1550,12 +1557,12 @@ void handleSensorVerification(String topic, String payload) {
   
   // Get the correct pin for the sensor number
   int pin_to_read;
-  switch(sensor_num) {
-    case 1: pin_to_read = SENSOR_PIN_1; break;
-    case 2: pin_to_read = SENSOR_PIN_2; break;
-    case 3: pin_to_read = SENSOR_PIN_3; break;
-    case 4: pin_to_read = SENSOR_PIN_4; break;
-    default: pin_to_read = SENSOR_PIN_1; break;
+  String pinStr = preferences.getString(("sensor_" + String(sensor_num) + "_pin").c_str(), "");
+  if (pinStr != "" && pinStr != "N/A") {
+    pin_to_read = pinStr.toInt();
+  } else {
+    Serial.println("❌ Error: No pin configured for sensor " + String(sensor_num));
+    return;
   }
   Serial.println("Physical pin state: " + String(digitalRead(pin_to_read)));
   
@@ -1573,13 +1580,17 @@ void handleSensorVerification(String topic, String payload) {
 
 void handleSensors() {
   // Read sensor states (inverted because of pull-up resistors)
-  sensor_states[0] = !digitalRead(SENSOR_PIN_1);
-  sensor_states[1] = !digitalRead(SENSOR_PIN_2);
-  sensor_states[2] = !digitalRead(SENSOR_PIN_3);
-  sensor_states[3] = !digitalRead(SENSOR_PIN_4);
+  // Read from dynamic pins for all sensors
+  for (int i = 1; i <= 10; i++) {
+    String pinStr = preferences.getString(("sensor_" + String(i) + "_pin").c_str(), "");
+    if (pinStr != "" && pinStr != "N/A") {
+      int pinNum = pinStr.toInt();
+      sensor_states[i-1] = !digitalRead(pinNum);
+    }
+  }
   
   // Check for changes and publish if needed
-  for (int i = 0; i < 4; i++) {  // Changed from 3 to 4 sensors
+  for (int i = 0; i < 10; i++) {  // Support up to 10 sensors
     if (sensor_states[i] != last_sensor_states[i]) {
       Serial.println("Sensor " + String(i + 1) + " state changed from " + 
                     String(last_sensor_states[i] ? "ACTIVE" : "INACTIVE") + " to " + 
@@ -1852,7 +1863,7 @@ void handleStatus() {
       sensorCount++;
       JsonObject sensor = sensorArray.createNestedObject();
       sensor["sensor"] = i;
-      sensor["state"] = (i <= 4) ? (sensor_states[i-1] ? "ACTIVE" : "INACTIVE") : "INACTIVE";
+      sensor["state"] = (i <= 10) ? (sensor_states[i-1] ? "ACTIVE" : "INACTIVE") : "INACTIVE";
       sensor["label"] = preferences.getString(("sensor_" + String(i) + "_label").c_str(), ("Sensor " + String(i)).c_str());
       sensor["id"] = id;
       sensor["pin"] = preferences.getString(("sensor_" + String(i) + "_pin").c_str(), getSensorPin(i));
@@ -1916,10 +1927,12 @@ void handleStatus() {
     // Determine if this pin is currently active (has a device assigned)
     bool isActive = false;
     if (deviceType == "sensor") {
-      // Check if this pin matches any sensor pin
-      if (String(pinNum) == getSensorPin(1) || String(pinNum) == getSensorPin(2) || 
-          String(pinNum) == getSensorPin(3) || String(pinNum) == getSensorPin(4)) {
-        isActive = true;
+      // Check if this pin matches any sensor pin - support up to 10 sensors
+      for (int i = 1; i <= 10; i++) {
+        if (String(pinNum) == getSensorPin(i)) {
+          isActive = true;
+          break;
+        }
       }
     } else if (deviceType == "turnout") {
       // Check if this pin matches any turnout pin - support up to 10 turnouts
@@ -2216,8 +2229,8 @@ void handleBackup() {
   // Add device settings (labels, IDs, and pins)
   JsonObject device_settings = doc.createNestedObject("device_settings");
   
-  // Sensor settings
-  for (int i = 1; i <= 4; i++) {
+  // Sensor settings - support up to 10 sensors
+  for (int i = 1; i <= 10; i++) {
     JsonObject sensor = device_settings.createNestedObject("sensor_" + String(i));
     sensor["label"] = preferences.getString(("sensor_" + String(i) + "_label").c_str(), "Sensor " + String(i));
     sensor["id"] = preferences.getString(("sensor_" + String(i) + "_id").c_str(), String(i));
@@ -2317,8 +2330,8 @@ void handleRestore() {
     if (doc.containsKey("device_settings")) {
       JsonObject device_settings = doc["device_settings"];
       
-      // Restore sensor settings
-      for (int i = 1; i <= 4; i++) {
+      // Restore sensor settings - support up to 10 sensors
+      for (int i = 1; i <= 10; i++) {
         String sensor_key = "sensor_" + String(i);
         if (device_settings.containsKey(sensor_key)) {
           JsonObject sensor = device_settings[sensor_key];
@@ -2391,11 +2404,13 @@ void handleRestore() {
     if (doc.containsKey("device_labels")) {
       JsonObject device_labels = doc["device_labels"];
       
-      // Restore sensor labels
-      if (device_labels.containsKey("sensor_1")) preferences.putString("sensor_label_1", device_labels["sensor_1"].as<String>());
-      if (device_labels.containsKey("sensor_2")) preferences.putString("sensor_label_2", device_labels["sensor_2"].as<String>());
-      if (device_labels.containsKey("sensor_3")) preferences.putString("sensor_label_3", device_labels["sensor_3"].as<String>());
-      if (device_labels.containsKey("sensor_4")) preferences.putString("sensor_label_4", device_labels["sensor_4"].as<String>());
+      // Restore sensor labels - support up to 10 sensors
+      for (int i = 1; i <= 10; i++) {
+        String key = "sensor_" + String(i);
+        if (device_labels.containsKey(key)) {
+          preferences.putString(("sensor_label_" + String(i)).c_str(), device_labels[key].as<String>());
+        }
+      }
       
       // Restore turnout labels - support up to 10 turnouts
       for (int i = 1; i <= 10; i++) {
@@ -2444,10 +2459,13 @@ void handleSaveDeviceLabels() {
 
     // Save to preferences
     JsonObject device_labels = doc["device_labels"];
-    if (device_labels.containsKey("sensor_1")) preferences.putString("sensor_label_1", device_labels["sensor_1"].as<String>());
-    if (device_labels.containsKey("sensor_2")) preferences.putString("sensor_label_2", device_labels["sensor_2"].as<String>());
-    if (device_labels.containsKey("sensor_3")) preferences.putString("sensor_label_3", device_labels["sensor_3"].as<String>());
-    if (device_labels.containsKey("sensor_4")) preferences.putString("sensor_label_4", device_labels["sensor_4"].as<String>());
+    // Save sensor labels - support up to 10 sensors
+    for (int i = 1; i <= 10; i++) {
+      String key = "sensor_" + String(i);
+      if (device_labels.containsKey(key)) {
+        preferences.putString(("sensor_label_" + String(i)).c_str(), device_labels[key].as<String>());
+      }
+    }
     // Save turnout labels - support up to 10 turnouts
     for (int i = 1; i <= 10; i++) {
       String key = "turnout_" + String(i);
@@ -2533,45 +2551,27 @@ void startMDNS() {
 
 // Helper functions to get pin numbers
 String getSensorPin(int sensorNum) {
-  switch(sensorNum) {
-    case 1: return String(SENSOR_PIN_1);
-    case 2: return String(SENSOR_PIN_2);
-    case 3: return String(SENSOR_PIN_3);
-    case 4: return String(SENSOR_PIN_4);
-    default: return "N/A";
+  // Get pin from preferences for all sensors
+  if (sensorNum >= 1 && sensorNum <= 10) {
+    return preferences.getString(("sensor_" + String(sensorNum) + "_pin").c_str(), "N/A");
   }
+  return "N/A";
 }
 
 String getTurnoutPin(int turnoutNum) {
-  // For turnouts 1-2, use hardcoded pins
-  switch(turnoutNum) {
-    case 1: return String(TURNOUT_PIN_1);
-    case 2: return String(TURNOUT_PIN_2);
-    default: 
-      // For turnouts 3-10, get pin from preferences
-      if (turnoutNum >= 3 && turnoutNum <= 10) {
-        return preferences.getString(("turnout_" + String(turnoutNum) + "_pin").c_str(), "N/A");
-      }
-      return "N/A";
+  // Get pin from preferences for all turnouts
+  if (turnoutNum >= 1 && turnoutNum <= 10) {
+    return preferences.getString(("turnout_" + String(turnoutNum) + "_pin").c_str(), "N/A");
   }
+  return "N/A";
 }
 
 String getLightPin(int lightNum) {
-  // For lights 1-6, use hardcoded pins
-  switch(lightNum) {
-    case 1: return String(LIGHT_PIN_1);
-    case 2: return String(LIGHT_PIN_2);
-    case 3: return String(LIGHT_PIN_3);
-    case 4: return String(LIGHT_PIN_4);
-    case 5: return String(LIGHT_PIN_5);
-    case 6: return String(LIGHT_PIN_6);
-    default: 
-      // For lights 7-10, get pin from preferences
-      if (lightNum >= 7 && lightNum <= 10) {
-        return preferences.getString(("light_" + String(lightNum) + "_pin").c_str(), "N/A");
-      }
-      return "N/A";
+  // Get pin from preferences for all lights
+  if (lightNum >= 1 && lightNum <= 10) {
+    return preferences.getString(("light_" + String(lightNum) + "_pin").c_str(), "N/A");
   }
+  return "N/A";
 }
 
 
@@ -2581,7 +2581,7 @@ void rebuildDeviceTypeMappings() {
   
   // Clear existing device-type mappings to avoid conflicts
   Serial.println("Clearing existing device-type mappings...");
-  for (int i = 1; i <= 4; i++) {
+  for (int i = 1; i <= 10; i++) {
     preferences.remove(("sensor_" + String(i) + "_id").c_str());
     preferences.remove(("sensor_" + String(i) + "_label").c_str());
     preferences.remove(("sensor_" + String(i) + "_pin").c_str());
@@ -2610,7 +2610,7 @@ void rebuildDeviceTypeMappings() {
   for (int pinNum : allPins) {
     String deviceType = preferences.getString(("pin_" + String(pinNum) + "_type").c_str(), "unused");
     
-    if (deviceType == "sensor" && sensorCount < 4) {
+    if (deviceType == "sensor" && sensorCount < 10) {
       sensorCount++;
       String deviceIdKey = "sensor_" + String(sensorCount) + "_id";
       String deviceLabelKey = "sensor_" + String(sensorCount) + "_label";

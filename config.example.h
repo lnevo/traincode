@@ -8,7 +8,7 @@
 #define CONFIG_H
 
 // Firmware version
-#define FIRMWARE_VERSION "4.0.7"
+#define FIRMWARE_VERSION "4.0.8"
 
 // Device configuration
 #define DEVICE_NAME "ESP32_JMRI_Client"
@@ -24,25 +24,11 @@
 #define DEFAULT_SSID "ESP32_Config"   // SSID for configuration mode
 #define DEFAULT_PASSWORD "12345678"    // Password for configuration mode
 
-// Pin definitions
-#define TURNOUT_PIN_1 2    // Turnout 1 control pin
-#define TURNOUT_PIN_2 4    // Turnout 2 control pin
+// Pin Configuration - DYNAMIC SYSTEM
+// All device pins are now configured dynamically through the web interface
+// No hardcoded pin definitions are needed
 
-// Individual Light pins (6 lights)
-#define LIGHT_PIN_1 5      // Light 1
-#define LIGHT_PIN_2 18     // Light 2
-#define LIGHT_PIN_3 19     // Light 3
-#define LIGHT_PIN_4 21     // Light 4
-#define LIGHT_PIN_5 22     // Light 5
-#define LIGHT_PIN_6 23     // Light 6
-
-// Sensor pins (track occupancy and turnout feedback)
-#define SENSOR_PIN_1 25    // Sensor 1 (track occupancy)
-#define SENSOR_PIN_2 26    // Sensor 2 (turnout feedback)
-#define SENSOR_PIN_3 27    // Sensor 3 (additional track occupancy)
-#define SENSOR_PIN_4 32    // Sensor 4 (additional track occupancy)
-
-#define STATUS_LED 2       // Status LED (shared with TURNOUT_PIN_1)
+#define STATUS_LED 2       // Status LED pin
 
 // Serial Configuration
 #define SERIAL_BAUD_RATE 115200       // Serial communication baud rate
