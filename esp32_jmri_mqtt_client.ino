@@ -37,6 +37,8 @@ struct PinCapability {
   String description;
 };
 
+
+
 // Define available pins and their capabilities
 // Reserved pins: GPIO0, GPIO2, GPIO4, GPIO5, GPIO12, GPIO15 (boot-strap)
 // Reserved pins: GPIO1, GPIO3 (USB-Serial), GPIO16, GPIO17 (UART2), GPIO21, GPIO22 (I²C)
@@ -243,17 +245,17 @@ bool mqtt_connected = false;
 unsigned long last_mqtt_attempt = 0;
 // Removed periodic status publishing - only publish on state changes
 
-// Sensor states - support up to 10 sensors
-bool sensor_states[10] = {false, false, false, false, false, false, false, false, false, false};  // 10 sensors
-bool last_sensor_states[10] = {false, false, false, false, false, false, false, false, false, false};
+// Sensor states - support up to MAX_SENSORS sensors (all available pins)
+bool sensor_states[MAX_SENSORS] = {false};  // Initialize all to false
+bool last_sensor_states[MAX_SENSORS] = {false};
 
-// Turnout states - support up to 10 turnouts
-bool turnout_states[10] = {false, false, false, false, false, false, false, false, false, false};  // false = CLOSED, true = THROWN
-bool last_turnout_states[10] = {false, false, false, false, false, false, false, false, false, false};
+// Turnout states - support up to MAX_TURNOUTS turnouts (all I/O pins)
+bool turnout_states[MAX_TURNOUTS] = {false};  // Initialize all to false (CLOSED)
+bool last_turnout_states[MAX_TURNOUTS] = {false};
 
-// Global state variables for lights - support up to 10 lights
-bool light_states[10] = {false, false, false, false, false, false, false, false, false, false};  // 10 individual lights
-bool last_light_states[10] = {false, false, false, false, false, false, false, false, false, false};
+// Global state variables for lights - support up to MAX_LIGHTS lights
+bool light_states[MAX_LIGHTS] = {false};  // Initialize all to false (OFF)
+bool last_light_states[MAX_LIGHTS] = {false};
 
 // Track recent publications to prevent feedback loops
 struct RecentPublication {
@@ -263,7 +265,8 @@ struct RecentPublication {
   bool from_web_gui;
 };
 
-RecentPublication recent_pubs[20];  // Track last 20 publications
+#define MAX_RECENT_PUBS 20  // Maximum number of recent publications to track
+RecentPublication recent_pubs[MAX_RECENT_PUBS];  // Track last MAX_RECENT_PUBS publications
 int recent_pub_index = 0;
 
 void trackPublication(String topic, String payload, bool fromWebGui = false) {
@@ -271,12 +274,12 @@ void trackPublication(String topic, String payload, bool fromWebGui = false) {
   recent_pubs[recent_pub_index].payload = payload;
   recent_pubs[recent_pub_index].timestamp = millis();
   recent_pubs[recent_pub_index].from_web_gui = fromWebGui;
-  recent_pub_index = (recent_pub_index + 1) % 20;
+  recent_pub_index = (recent_pub_index + 1) % MAX_RECENT_PUBS;
 }
 
 bool isOurOwnMessage(String topic, String payload) {
   unsigned long now = millis();
-  for (int i = 0; i < 20; i++) {
+  for (int i = 0; i < MAX_RECENT_PUBS; i++) {
     if (recent_pubs[i].topic == topic && 
         recent_pubs[i].payload == payload && 
         (now - recent_pubs[i].timestamp) < 2000) {  // Within 2 seconds
@@ -469,7 +472,7 @@ void setupPins() {
   digitalWrite(STATUS_LED, HIGH);  // Status LED ON
   
   Serial.println("Pins will be configured dynamically as devices are assigned");
-  Serial.println("System supports up to 10 turnouts, up to 10 individual lights, and up to 10 sensors");
+  Serial.println("System supports up to " + String(MAX_TURNOUTS) + " turnouts, up to " + String(MAX_LIGHTS) + " individual lights, and up to " + String(MAX_SENSORS) + " sensors");
   Serial.println("All device pins must be configured through the web interface before use");
 }
 
@@ -490,7 +493,7 @@ void initializeDevicePinsFromPreferences() {
   Serial.println("=== Initializing Device Pins from Preferences ===");
   
   // Initialize sensor pins
-  for (int i = 1; i <= 10; i++) {
+  for (int i = 1; i <= MAX_SENSORS; i++) {
     String pinStr = preferences.getString(("sensor_" + String(i) + "_pin").c_str(), "");
     if (pinStr != "" && pinStr != "N/A") {
       int pinNum = pinStr.toInt();
@@ -500,7 +503,7 @@ void initializeDevicePinsFromPreferences() {
   }
   
   // Initialize turnout pins
-  for (int i = 1; i <= 10; i++) {
+  for (int i = 1; i <= MAX_TURNOUTS; i++) {
     String pinStr = preferences.getString(("turnout_" + String(i) + "_pin").c_str(), "");
     if (pinStr != "" && pinStr != "N/A") {
       int pinNum = pinStr.toInt();
@@ -511,7 +514,7 @@ void initializeDevicePinsFromPreferences() {
   }
   
   // Initialize light pins
-  for (int i = 1; i <= 10; i++) {
+  for (int i = 1; i <= MAX_LIGHTS; i++) {
     String pinStr = preferences.getString(("light_" + String(i) + "_pin").c_str(), "");
     if (pinStr != "" && pinStr != "N/A") {
       int pinNum = pinStr.toInt();
@@ -811,7 +814,7 @@ void setupWebServer() {
       // Now test if the light control can find this ID
       response += "\n=== Testing Light Control Mapping ===\n";
       bool found = false;
-      for (int i = 1; i <= 10; i++) {
+      for (int i = 1; i <= MAX_LIGHTS; i++) {
         String stored_id = preferences.getString(("light_" + String(i) + "_id").c_str(), String(i));
         if (stored_id == customId) {
           response += "Light control found custom ID '" + customId + "' maps to physical light " + String(i) + "\n";
@@ -841,7 +844,7 @@ void setupWebServer() {
     // Show sensor mappings - dynamically count how many exist
     response += "Sensors:\n";
     int debugSensorCount = 0;
-    for (int i = 1; i <= 10; i++) {
+    for (int i = 1; i <= MAX_SENSORS; i++) {
       String id = preferences.getString(("sensor_" + String(i) + "_id").c_str(), "");
       if (id != "" && id != "NOT_FOUND") {
         debugSensorCount++;
@@ -857,7 +860,7 @@ void setupWebServer() {
     // Show turnout mappings - dynamically count how many exist
     response += "\nTurnouts:\n";
     int debugTurnoutCount = 0;
-    for (int i = 1; i <= 10; i++) {
+    for (int i = 1; i <= MAX_TURNOUTS; i++) {
       String id = preferences.getString(("turnout_" + String(i) + "_id").c_str(), "");
       if (id != "" && id != "NOT_FOUND") {
         debugTurnoutCount++;
@@ -873,7 +876,7 @@ void setupWebServer() {
     // Show light mappings - dynamically count how many exist
     response += "Lights:\n";
     int debugLightCount = 0;
-    for (int i = 1; i <= 10; i++) {
+    for (int i = 1; i <= MAX_LIGHTS; i++) {
       String id = preferences.getString(("light_" + String(i) + "_id").c_str(), "");
       if (id != "" && id != "NOT_FOUND") {
         debugLightCount++;
@@ -889,7 +892,7 @@ void setupWebServer() {
     // Also show what's actually in the preferences for comparison
     response += "\n=== Raw Preferences Values ===\n";
     response += "Sensors:\n";
-    for (int i = 1; i <= 10; i++) {
+    for (int i = 1; i <= MAX_SENSORS; i++) {
       String id = preferences.getString(("sensor_" + String(i) + "_id").c_str(), "NOT_FOUND");
       String label = preferences.getString(("sensor_" + String(i) + "_label").c_str(), "NOT_FOUND");
       String pin = preferences.getString(("sensor_" + String(i) + "_pin").c_str(), "NOT_FOUND");
@@ -900,7 +903,7 @@ void setupWebServer() {
     
     response += "\nTurnouts:\n";
     int turnoutCount = 0;
-    for (int i = 1; i <= 10; i++) {
+    for (int i = 1; i <= MAX_TURNOUTS; i++) {
       String id = preferences.getString(("turnout_" + String(i) + "_id").c_str(), "");
       if (id != "" && id != "NOT_FOUND") {
         turnoutCount++;
@@ -916,7 +919,7 @@ void setupWebServer() {
     }
     
     response += "\nLights:\n";
-    for (int i = 1; i <= 10; i++) {
+    for (int i = 1; i <= MAX_LIGHTS; i++) {
       String id = preferences.getString(("light_" + String(i) + "_id").c_str(), "NOT_FOUND");
       String label = preferences.getString(("light_" + String(i) + "_label").c_str(), "NOT_FOUND");
       String pin = preferences.getString(("light_" + String(i) + "_pin").c_str(), "NOT_FOUND");
@@ -933,7 +936,7 @@ void setupWebServer() {
     
     // Check for sensor settings
     response += "Sensors:\n";
-    for (int i = 1; i <= 10; i++) {
+    for (int i = 1; i <= MAX_SENSORS; i++) {
       String id_key = "sensor_" + String(i) + "_id";
       String pin_key = "sensor_" + String(i) + "_pin";
       String label_key = "sensor_" + String(i) + "_label";
@@ -949,7 +952,7 @@ void setupWebServer() {
     }
     
     response += "\nTurnouts:\n";
-    for (int i = 1; i <= 10; i++) {
+    for (int i = 1; i <= MAX_TURNOUTS; i++) {
       String id_key = "turnout_" + String(i) + "_id";
       String pin_key = "turnout_" + String(i) + "_pin";
       String label_key = "turnout_" + String(i) + "_label";
@@ -965,7 +968,7 @@ void setupWebServer() {
     }
     
     response += "\nLights:\n";
-    for (int i = 1; i <= 10; i++) {
+    for (int i = 1; i <= MAX_LIGHTS; i++) {
       String id_key = "light_" + String(i) + "_id";
       String pin_key = "light_" + String(i) + "_pin";
       String label_key = "light_" + String(i) + "_label";
@@ -1190,15 +1193,15 @@ void mqttReconnect() {
     }
     
     Serial.println("=== Current States After MQTT Sync ===");
-    // Display turnout states - support up to 10 turnouts
-    for (int i = 0; i < 10; i++) {
+    // Display turnout states - support up to MAX_TURNOUTS turnouts
+    for (int i = 0; i < MAX_TURNOUTS; i++) {
       if (turnout_states[i]) {
         Serial.println("Turnout " + String(i + 1) + ": " + String(turnout_states[i] ? "THROWN" : "CLOSED"));
       }
     }
-    // Display light states - support up to 10 lights
+    // Display light states - support up to MAX_LIGHTS lights
     String lightStates = "Lights: ";
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < MAX_LIGHTS; i++) {
       if (light_states[i]) {
         lightStates += String(light_states[i] ? "ON" : "OFF") + " ";
       }
@@ -1297,8 +1300,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     Serial.println("  Sensor topic detected: " + topic_str);
     Serial.println("  Payload: " + payload_str);
           Serial.println("  Current sensor states:");
-      // Display sensor states - support up to 10 sensors
-      for (int i = 0; i < 10; i++) {
+      // Display sensor states - support up to MAX_SENSORS sensors
+      for (int i = 0; i < MAX_SENSORS; i++) {
         if (sensor_states[i]) {
           Serial.println("    Sensor " + String(i+1) + ": " + String(sensor_states[i] ? "ACTIVE" : "INACTIVE"));
         }
@@ -1319,7 +1322,7 @@ void handleTurnoutControl(String topic, String payload) {
   
   // Find which physical turnout this ID maps to
   int physical_turnout = 0;
-  for (int i = 1; i <= 10; i++) {
+  for (int i = 1; i <= MAX_TURNOUTS; i++) {
     String stored_id = preferences.getString(("turnout_" + String(i) + "_id").c_str(), String(i));
     if (stored_id == turnout_id_str) {
       physical_turnout = i;
@@ -1327,8 +1330,8 @@ void handleTurnoutControl(String topic, String payload) {
     }
   }
   
-  // Validate turnout number - support up to 10 turnouts
-  if (physical_turnout < 1 || physical_turnout > 10) {
+  // Validate turnout number - support up to MAX_TURNOUTS turnouts
+  if (physical_turnout < 1 || physical_turnout > MAX_TURNOUTS) {
     Serial.println("❌ Error: Invalid turnout ID: " + turnout_id_str);
     Serial.println("No physical turnout found with this ID");
     Serial.println("=====================");
@@ -1446,7 +1449,7 @@ void handleLightControl(String topic, String payload) {
   
   // Find which physical light this ID maps to
   int physical_light = 0;
-  for (int i = 1; i <= 10; i++) {
+  for (int i = 1; i <= MAX_LIGHTS; i++) {
     String stored_id = preferences.getString(("light_" + String(i) + "_id").c_str(), String(i));
     if (stored_id == light_id_str) {
       physical_light = i;
@@ -1454,8 +1457,8 @@ void handleLightControl(String topic, String payload) {
     }
   }
   
-  // Validate light number - support up to 10 lights
-  if (physical_light < 1 || physical_light > 10) {
+  // Validate light number - support up to MAX_LIGHTS lights
+  if (physical_light < 1 || physical_light > MAX_LIGHTS) {
     Serial.println("❌ Error: Invalid light ID: " + light_id_str);
     Serial.println("No physical light found with this ID");
     Serial.println("=====================");
@@ -1526,7 +1529,7 @@ void handleSensorVerification(String topic, String payload) {
   
   // Find which physical sensor this ID maps to
   int physical_sensor = 0;
-  for (int i = 1; i <= 10; i++) {
+  for (int i = 1; i <= MAX_SENSORS; i++) {
     String stored_id = preferences.getString(("sensor_" + String(i) + "_id").c_str(), String(i));
     if (stored_id == sensor_id_str) {
       physical_sensor = i;
@@ -1534,8 +1537,8 @@ void handleSensorVerification(String topic, String payload) {
     }
   }
   
-  // Validate sensor number - support up to 10 sensors
-  if (physical_sensor < 1 || physical_sensor > 10) {
+  // Validate sensor number - support up to MAX_SENSORS sensors
+  if (physical_sensor < 1 || physical_sensor > MAX_SENSORS) {
     Serial.println("❌ Error: Invalid sensor ID: " + sensor_id_str);
     Serial.println("No physical sensor found with this ID");
     Serial.println("=====================");
@@ -1581,7 +1584,7 @@ void handleSensorVerification(String topic, String payload) {
 void handleSensors() {
   // Read sensor states (inverted because of pull-up resistors)
   // Read from dynamic pins for all sensors
-  for (int i = 1; i <= 10; i++) {
+  for (int i = 1; i <= MAX_SENSORS; i++) {
     String pinStr = preferences.getString(("sensor_" + String(i) + "_pin").c_str(), "");
     if (pinStr != "" && pinStr != "N/A") {
       int pinNum = pinStr.toInt();
@@ -1590,7 +1593,7 @@ void handleSensors() {
   }
   
   // Check for changes and publish if needed
-  for (int i = 0; i < 10; i++) {  // Support up to 10 sensors
+  for (int i = 0; i < MAX_SENSORS; i++) {  // Support up to MAX_SENSORS sensors
     if (sensor_states[i] != last_sensor_states[i]) {
       Serial.println("Sensor " + String(i + 1) + " state changed from " + 
                     String(last_sensor_states[i] ? "ACTIVE" : "INACTIVE") + " to " + 
@@ -1857,13 +1860,13 @@ void handleStatus() {
   // Add sensor states - dynamically count how many exist
   JsonArray sensorArray = doc.createNestedArray("sensor_states");
   int sensorCount = 0;
-  for (int i = 1; i <= 10; i++) {
+  for (int i = 1; i <= MAX_SENSORS; i++) {
     String id = preferences.getString(("sensor_" + String(i) + "_id").c_str(), "");
     if (id != "" && id != "NOT_FOUND") {
       sensorCount++;
       JsonObject sensor = sensorArray.createNestedObject();
       sensor["sensor"] = i;
-      sensor["state"] = (i <= 10) ? (sensor_states[i-1] ? "ACTIVE" : "INACTIVE") : "INACTIVE";
+      sensor["state"] = (i <= MAX_SENSORS) ? (sensor_states[i-1] ? "ACTIVE" : "INACTIVE") : "INACTIVE";
       sensor["label"] = preferences.getString(("sensor_" + String(i) + "_label").c_str(), ("Sensor " + String(i)).c_str());
       sensor["id"] = id;
       sensor["pin"] = preferences.getString(("sensor_" + String(i) + "_pin").c_str(), getSensorPin(i));
@@ -1874,13 +1877,13 @@ void handleStatus() {
   // Add turnout states - dynamically count how many exist
   JsonArray turnoutArray = doc.createNestedArray("turnout_states");
   int turnoutCount = 0;
-  for (int i = 1; i <= 10; i++) {
+  for (int i = 1; i <= MAX_TURNOUTS; i++) {
     String id = preferences.getString(("turnout_" + String(i) + "_id").c_str(), "");
     if (id != "" && id != "NOT_FOUND") {
       turnoutCount++;
       JsonObject turnout = turnoutArray.createNestedObject();
       turnout["turnout"] = i;
-      turnout["position"] = (i <= 10) ? (turnout_states[i-1] ? "THROWN" : "CLOSED") : "CLOSED";
+      turnout["position"] = (i <= MAX_TURNOUTS) ? (turnout_states[i-1] ? "THROWN" : "CLOSED") : "CLOSED";
       turnout["label"] = preferences.getString(("turnout_" + String(i) + "_label").c_str(), ("Turnout " + String(i)).c_str());
       turnout["id"] = id;
       turnout["pin"] = preferences.getString(("turnout_" + String(i) + "_pin").c_str(), getTurnoutPin(i));
@@ -1891,13 +1894,13 @@ void handleStatus() {
   // Add individual light states - dynamically count how many exist
   JsonArray lightArray = doc.createNestedArray("lights");
   int lightCount = 0;
-  for (int i = 1; i <= 10; i++) {
+  for (int i = 1; i <= MAX_LIGHTS; i++) {
     String id = preferences.getString(("light_" + String(i) + "_id").c_str(), "");
     if (id != "" && id != "NOT_FOUND") {
       lightCount++;
       JsonObject light = lightArray.createNestedObject();
       light["light"] = i;
-      light["state"] = (i <= 10) ? (light_states[i-1] ? "ON" : "OFF") : "OFF";
+      light["state"] = (i <= MAX_LIGHTS) ? (light_states[i-1] ? "ON" : "OFF") : "OFF";
       light["label"] = preferences.getString(("light_" + String(i) + "_label").c_str(), ("Light " + String(i)).c_str());
       light["id"] = id;
       light["pin"] = preferences.getString(("light_" + String(i) + "_pin").c_str(), getLightPin(i));
@@ -1905,15 +1908,46 @@ void handleStatus() {
     }
   }
   
-  // Add all pin configurations for the device table
+  // Add all pin configurations for the device table - sorted by GPIO with used pins first
   JsonArray allPinsArray = doc.createNestedArray("all_pins");
   
-  // Define all available pins (same as in JavaScript)
-  int allPins[] = {13,14,18,19,21,22,23,25,26,27,32,33,34,35,36,39};
+  // First, collect all used pins to sort them first
+  std::vector<int> usedPins;
+  std::vector<int> unusedPins;
   
-  for (int pinNum : allPins) {
+  // Check all available pins from AVAILABLE_PINS array
+  for (int i = 0; i < NUM_AVAILABLE_PINS; i++) {
+    int pinNum = AVAILABLE_PINS[i].pin;
+    String deviceType = preferences.getString(("pin_" + String(pinNum) + "_type").c_str(), "unused");
+    
+    if (deviceType != "unused") {
+      usedPins.push_back(pinNum);
+    } else {
+      unusedPins.push_back(pinNum);
+    }
+  }
+  
+  // Sort used pins by GPIO number
+  std::sort(usedPins.begin(), usedPins.end());
+  
+  // Sort unused pins by GPIO number
+  std::sort(unusedPins.begin(), unusedPins.end());
+  
+  // Add used pins first, then unused pins
+  std::vector<int> sortedPins;
+  sortedPins.insert(sortedPins.end(), usedPins.begin(), usedPins.end());
+  sortedPins.insert(sortedPins.end(), unusedPins.begin(), unusedPins.end());
+  
+  for (int pinNum : sortedPins) {
     JsonObject pin = allPinsArray.createNestedObject();
     pin["pin"] = pinNum;
+    
+    // Get pin capabilities
+    PinCapability cap = getPinCapability(pinNum);
+    pin["can_input"] = cap.canInput;
+    pin["can_output"] = cap.canOutput;
+    pin["can_pwm"] = cap.canPWM;
+    pin["description"] = cap.description;
     
     // Check if this pin has a saved device type
     String deviceType = preferences.getString(("pin_" + String(pinNum) + "_type").c_str(), "unused");
@@ -1927,24 +1961,24 @@ void handleStatus() {
     // Determine if this pin is currently active (has a device assigned)
     bool isActive = false;
     if (deviceType == "sensor") {
-      // Check if this pin matches any sensor pin - support up to 10 sensors
-      for (int i = 1; i <= 10; i++) {
+      // Check if this pin matches any sensor pin - support up to MAX_SENSORS sensors
+      for (int i = 1; i <= MAX_SENSORS; i++) {
         if (String(pinNum) == getSensorPin(i)) {
           isActive = true;
           break;
         }
       }
     } else if (deviceType == "turnout") {
-      // Check if this pin matches any turnout pin - support up to 10 turnouts
-      for (int i = 1; i <= 10; i++) {
+      // Check if this pin matches any turnout pin - support up to MAX_TURNOUTS turnouts
+      for (int i = 1; i <= MAX_TURNOUTS; i++) {
         if (String(pinNum) == getTurnoutPin(i)) {
           isActive = true;
           break;
         }
       }
     } else if (deviceType == "light") {
-      // Check if this pin matches any light pin - support up to 10 lights
-      for (int i = 1; i <= 10; i++) {
+      // Check if this pin matches any light pin - support up to MAX_LIGHTS lights
+      for (int i = 1; i <= MAX_LIGHTS; i++) {
         if (String(pinNum) == getLightPin(i)) {
           isActive = true;
           break;
@@ -1981,7 +2015,7 @@ void handleDeviceControl() {
   Serial.println("Action: " + action);
   
   if (type == "turnout") {
-    if (number < 1 || number > 10) {
+    if (number < 1 || number > MAX_TURNOUTS) {
       web_server.send(400, "text/plain", "Invalid turnout number");
       return;
     }
@@ -2018,8 +2052,8 @@ void handleDeviceControl() {
     Serial.println("State change from web GUI - published to MQTT for JMRI awareness");
     
   } else if (type == "light") {
-    // Handle light control for signal heads - support up to 10 lights
-    if (number < 1 || number > 10) {
+    // Handle light control for signal heads - support up to MAX_LIGHTS lights
+    if (number < 1 || number > MAX_LIGHTS) {
       web_server.send(400, "text/plain", "Invalid light number");
       return;
     }
@@ -2229,8 +2263,8 @@ void handleBackup() {
   // Add device settings (labels, IDs, and pins)
   JsonObject device_settings = doc.createNestedObject("device_settings");
   
-  // Sensor settings - support up to 10 sensors
-  for (int i = 1; i <= 10; i++) {
+  // Sensor settings - support up to MAX_SENSORS sensors
+  for (int i = 1; i <= MAX_SENSORS; i++) {
     JsonObject sensor = device_settings.createNestedObject("sensor_" + String(i));
     sensor["label"] = preferences.getString(("sensor_" + String(i) + "_label").c_str(), "Sensor " + String(i));
     sensor["id"] = preferences.getString(("sensor_" + String(i) + "_id").c_str(), String(i));
@@ -2238,8 +2272,8 @@ void handleBackup() {
     sensor["type"] = preferences.getString(("sensor_" + String(i) + "_type").c_str(), "sensor");
   }
   
-  // Turnout settings - support up to 10 turnouts
-  for (int i = 1; i <= 10; i++) {
+  // Turnout settings - support up to MAX_TURNOUTS turnouts
+  for (int i = 1; i <= MAX_TURNOUTS; i++) {
     JsonObject turnout = device_settings.createNestedObject("turnout_" + String(i));
     turnout["label"] = preferences.getString(("turnout_" + String(i) + "_label").c_str(), "Turnout " + String(i));
     turnout["id"] = preferences.getString(("turnout_" + String(i) + "_id").c_str(), String(i));
@@ -2247,8 +2281,8 @@ void handleBackup() {
     turnout["type"] = preferences.getString(("turnout_" + String(i) + "_type").c_str(), "turnout");
   }
   
-  // Light settings - support up to 10 lights
-  for (int i = 1; i <= 10; i++) {
+  // Light settings - support up to MAX_LIGHTS lights
+  for (int i = 1; i <= MAX_LIGHTS; i++) {
     JsonObject light = device_settings.createNestedObject("light_" + String(i));
     light["label"] = preferences.getString(("light_" + String(i) + "_label").c_str(), "Light " + String(i));
     light["id"] = preferences.getString(("light_" + String(i) + "_id").c_str(), String(i));
@@ -2330,8 +2364,8 @@ void handleRestore() {
     if (doc.containsKey("device_settings")) {
       JsonObject device_settings = doc["device_settings"];
       
-      // Restore sensor settings - support up to 10 sensors
-      for (int i = 1; i <= 10; i++) {
+      // Restore sensor settings - support up to MAX_SENSORS sensors
+      for (int i = 1; i <= MAX_SENSORS; i++) {
         String sensor_key = "sensor_" + String(i);
         if (device_settings.containsKey(sensor_key)) {
           JsonObject sensor = device_settings[sensor_key];
@@ -2342,8 +2376,8 @@ void handleRestore() {
         }
       }
       
-      // Restore turnout settings - support up to 10 turnouts
-      for (int i = 1; i <= 10; i++) {
+      // Restore turnout settings - support up to MAX_TURNOUTS turnouts
+      for (int i = 1; i <= MAX_TURNOUTS; i++) {
         String turnout_key = "turnout_" + String(i);
         if (device_settings.containsKey(turnout_key)) {
           JsonObject turnout = device_settings[turnout_key];
@@ -2354,8 +2388,8 @@ void handleRestore() {
         }
       }
       
-      // Restore light settings - support up to 10 lights
-      for (int i = 1; i <= 10; i++) {
+      // Restore light settings - support up to MAX_LIGHTS lights
+      for (int i = 1; i <= MAX_LIGHTS; i++) {
         String light_key = "light_" + String(i);
         if (device_settings.containsKey(light_key)) {
           JsonObject light = device_settings[light_key];
@@ -2404,24 +2438,24 @@ void handleRestore() {
     if (doc.containsKey("device_labels")) {
       JsonObject device_labels = doc["device_labels"];
       
-      // Restore sensor labels - support up to 10 sensors
-      for (int i = 1; i <= 10; i++) {
+      // Restore sensor labels - support up to MAX_SENSORS sensors
+      for (int i = 1; i <= MAX_SENSORS; i++) {
         String key = "sensor_" + String(i);
         if (device_labels.containsKey(key)) {
           preferences.putString(("sensor_label_" + String(i)).c_str(), device_labels[key].as<String>());
         }
       }
       
-      // Restore turnout labels - support up to 10 turnouts
-      for (int i = 1; i <= 10; i++) {
+      // Restore turnout labels - support up to MAX_TURNOUTS turnouts
+      for (int i = 1; i <= MAX_TURNOUTS; i++) {
         String key = "turnout_" + String(i);
         if (device_labels.containsKey(key)) {
           preferences.putString(("turnout_label_" + String(i)).c_str(), device_labels[key].as<String>());
         }
       }
       
-      // Restore light labels - support up to 10 lights
-      for (int i = 1; i <= 10; i++) {
+      // Restore light labels - support up to MAX_LIGHTS lights
+      for (int i = 1; i <= MAX_LIGHTS; i++) {
         String key = "light_" + String(i);
         if (device_labels.containsKey(key)) {
           preferences.putString(("light_label_" + String(i)).c_str(), device_labels[key].as<String>());
@@ -2459,22 +2493,22 @@ void handleSaveDeviceLabels() {
 
     // Save to preferences
     JsonObject device_labels = doc["device_labels"];
-    // Save sensor labels - support up to 10 sensors
-    for (int i = 1; i <= 10; i++) {
+    // Save sensor labels - support up to MAX_SENSORS sensors
+    for (int i = 1; i <= MAX_SENSORS; i++) {
       String key = "sensor_" + String(i);
       if (device_labels.containsKey(key)) {
         preferences.putString(("sensor_label_" + String(i)).c_str(), device_labels[key].as<String>());
       }
     }
-    // Save turnout labels - support up to 10 turnouts
-    for (int i = 1; i <= 10; i++) {
+    // Save turnout labels - support up to MAX_TURNOUTS turnouts
+    for (int i = 1; i <= MAX_TURNOUTS; i++) {
       String key = "turnout_" + String(i);
       if (device_labels.containsKey(key)) {
         preferences.putString(("turnout_label_" + String(i)).c_str(), device_labels[key].as<String>());
       }
     }
-    // Save light labels - support up to 10 lights
-    for (int i = 1; i <= 10; i++) {
+    // Save light labels - support up to MAX_LIGHTS lights
+    for (int i = 1; i <= MAX_LIGHTS; i++) {
       String key = "light_" + String(i);
       if (device_labels.containsKey(key)) {
         preferences.putString(("light_label_" + String(i)).c_str(), device_labels[key].as<String>());
@@ -2552,7 +2586,7 @@ void startMDNS() {
 // Helper functions to get pin numbers
 String getSensorPin(int sensorNum) {
   // Get pin from preferences for all sensors
-  if (sensorNum >= 1 && sensorNum <= 10) {
+  if (sensorNum >= 1 && sensorNum <= MAX_SENSORS) {
     return preferences.getString(("sensor_" + String(sensorNum) + "_pin").c_str(), "N/A");
   }
   return "N/A";
@@ -2560,7 +2594,7 @@ String getSensorPin(int sensorNum) {
 
 String getTurnoutPin(int turnoutNum) {
   // Get pin from preferences for all turnouts
-  if (turnoutNum >= 1 && turnoutNum <= 10) {
+  if (turnoutNum >= 1 && turnoutNum <= MAX_TURNOUTS) {
     return preferences.getString(("turnout_" + String(turnoutNum) + "_pin").c_str(), "N/A");
   }
   return "N/A";
@@ -2568,7 +2602,7 @@ String getTurnoutPin(int turnoutNum) {
 
 String getLightPin(int lightNum) {
   // Get pin from preferences for all lights
-  if (lightNum >= 1 && lightNum <= 10) {
+  if (lightNum >= 1 && lightNum <= MAX_LIGHTS) {
     return preferences.getString(("light_" + String(lightNum) + "_pin").c_str(), "N/A");
   }
   return "N/A";
@@ -2581,19 +2615,19 @@ void rebuildDeviceTypeMappings() {
   
   // Clear existing device-type mappings to avoid conflicts
   Serial.println("Clearing existing device-type mappings...");
-  for (int i = 1; i <= 10; i++) {
+  for (int i = 1; i <= MAX_SENSORS; i++) {
     preferences.remove(("sensor_" + String(i) + "_id").c_str());
     preferences.remove(("sensor_" + String(i) + "_label").c_str());
     preferences.remove(("sensor_" + String(i) + "_pin").c_str());
     preferences.remove(("sensor_" + String(i) + "_type").c_str());
   }
-  for (int i = 1; i <= 10; i++) {
+  for (int i = 1; i <= MAX_TURNOUTS; i++) {
     preferences.remove(("turnout_" + String(i) + "_id").c_str());
     preferences.remove(("turnout_" + String(i) + "_label").c_str());
     preferences.remove(("turnout_" + String(i) + "_pin").c_str());
     preferences.remove(("turnout_" + String(i) + "_type").c_str());
   }
-  for (int i = 1; i <= 10; i++) {
+  for (int i = 1; i <= MAX_LIGHTS; i++) {
     preferences.remove(("light_" + String(i) + "_id").c_str());
     preferences.remove(("light_" + String(i) + "_label").c_str());
     preferences.remove(("light_" + String(i) + "_pin").c_str());
@@ -2610,7 +2644,7 @@ void rebuildDeviceTypeMappings() {
   for (int pinNum : allPins) {
     String deviceType = preferences.getString(("pin_" + String(pinNum) + "_type").c_str(), "unused");
     
-    if (deviceType == "sensor" && sensorCount < 10) {
+    if (deviceType == "sensor" && sensorCount < MAX_SENSORS) {
       sensorCount++;
       String deviceIdKey = "sensor_" + String(sensorCount) + "_id";
       String deviceLabelKey = "sensor_" + String(sensorCount) + "_label";
@@ -2629,7 +2663,7 @@ void rebuildDeviceTypeMappings() {
       
       Serial.println("  Mapped: " + deviceIdKey + " = " + id);
       
-    } else if (deviceType == "turnout" && turnoutCount < 10) {
+    } else if (deviceType == "turnout" && turnoutCount < MAX_TURNOUTS) {
       turnoutCount++;
       String deviceIdKey = "turnout_" + String(turnoutCount) + "_id";
       String deviceLabelKey = "turnout_" + String(turnoutCount) + "_label";
@@ -2648,7 +2682,7 @@ void rebuildDeviceTypeMappings() {
       
       Serial.println("  Mapped: " + deviceIdKey + " = " + id);
       
-    } else if (deviceType == "light" && lightCount < 10) {
+    } else if (deviceType == "light" && lightCount < MAX_LIGHTS) {
       lightCount++;
       String deviceIdKey = "light_" + String(lightCount) + "_id";
       String deviceLabelKey = "light_" + String(lightCount) + "_label";
@@ -2713,19 +2747,19 @@ void handleSaveDeviceSettings() {
     // Clear existing device-type mappings to avoid conflicts
     Serial.println("Clearing existing device-type mappings...");
     // Clear more aggressively to handle device type changes
-    for (int i = 1; i <= 10; i++) {
+    for (int i = 1; i <= MAX_SENSORS; i++) {
       preferences.remove(("sensor_" + String(i) + "_id").c_str());
       preferences.remove(("sensor_" + String(i) + "_label").c_str());
       preferences.remove(("sensor_" + String(i) + "_pin").c_str());
       preferences.remove(("sensor_" + String(i) + "_type").c_str());
     }
-    for (int i = 1; i <= 10; i++) {
+    for (int i = 1; i <= MAX_TURNOUTS; i++) {
       preferences.remove(("turnout_" + String(i) + "_id").c_str());
       preferences.remove(("turnout_" + String(i) + "_label").c_str());
       preferences.remove(("turnout_" + String(i) + "_pin").c_str());
       preferences.remove(("turnout_" + String(i) + "_type").c_str());
     }
-    for (int i = 1; i <= 10; i++) {
+    for (int i = 1; i <= MAX_LIGHTS; i++) {
       preferences.remove(("light_" + String(i) + "_id").c_str());
       preferences.remove(("light_" + String(i) + "_label").c_str());
       preferences.remove(("light_" + String(i) + "_pin").c_str());

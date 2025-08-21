@@ -8,7 +8,7 @@
 #define CONFIG_H
 
 // Firmware version
-#define FIRMWARE_VERSION "4.0.8"
+#define FIRMWARE_VERSION "4.0.10"
 
 // Device configuration
 #define DEVICE_NAME "ESP32_JMRI_Client"
@@ -29,6 +29,11 @@
 // No hardcoded pin definitions are needed
 
 #define STATUS_LED 2       // Status LED pin
+
+// System Device Limits - Adjust for your specific ESP32 board
+#define MAX_TURNOUTS 26    // Maximum number of turnouts (all I/O pins)
+#define MAX_LIGHTS 10      // Maximum number of lights (limited by electrical considerations)
+#define MAX_SENSORS 32     // Maximum number of sensors (all available pins)
 
 // Serial Configuration
 #define SERIAL_BAUD_RATE 115200       // Serial communication baud rate
