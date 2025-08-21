@@ -759,7 +759,7 @@ const char* getMainPageHTML() {
                         tableHtml += '<td>Output Only</td>';
                         tableHtml += '<td>' + turnout.position + '</td>';
                         tableHtml += '<td><input type="text" class="device-label" value="' + (turnout.label || 'Turnout ' + (i + 1)) + '" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"></td>';
-                        tableHtml += '<td><button onclick="controlTurnout(' + (i + 1) + ')">' + turnout.position + '</button></td>';
+                        tableHtml += '<td><button onclick="controlLight(' + (i + 1) + ', \'turnout\')">' + turnout.position + '</button></td>';
                         tableHtml += '</tr>';
                     });
                 }
@@ -774,7 +774,7 @@ const char* getMainPageHTML() {
                         tableHtml += '<td>Output + PWM</td>';
                         tableHtml += '<td>' + light.state + '</td>';
                         tableHtml += '<td><input type="text" class="device-label" value="' + (light.label || 'Light ' + (i + 1)) + '" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"></td>';
-                        tableHtml += '<td><button onclick="controlLight(' + (i + 1) + ')">' + light.state + '</button></td>';
+                        tableHtml += '<td><button onclick="controlLight(' + (i + 1) + ', \'light\')">' + light.state + '</button></td>';
                         tableHtml += '</tr>';
                     });
                 }
@@ -1114,12 +1114,12 @@ const char* getMainPageHTML() {
             .catch(error => console.error('Control request error:', error));
         }
 
-        function controlLight(lightNumber) {
+        function controlLight(deviceNumber, deviceType = 'light') {
             
-            // Toggle the light state (ON/OFF)
+            // Toggle the device state (ON/OFF for lights, CLOSED/THROWN for turnouts)
             const formData = new FormData();
-            formData.append('type', 'light');
-            formData.append('number', lightNumber);
+            formData.append('type', deviceType);
+            formData.append('number', deviceNumber);
             formData.append('action', 'toggle');
             
             fetch('/control', { method: 'POST', body: formData })
