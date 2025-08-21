@@ -817,7 +817,7 @@ const char* getMainPageHTML() {
                 unusedPins.forEach(function(pin) {
                     const capabilities = pin.description || 'I/O';
                     tableHtml += '<tr data-device-type="unused" data-device-num="0" data-pin="' + pin.pin + '" style="opacity: 0.6;">';
-                    tableHtml += '<td><select class="device-type" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"><option value="unused">Unused</option><option value="sensor">Sensor</option><option value="turnout">Turnout</option><option value="light">Light</option></select></td>';
+                    tableHtml += '<td><select class="device-type" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"><option value="unused">Unused</option><option value="sensor">Sensor</option>' + (capabilities.includes('Input') ? '' : '<option value="turnout">Turnout</option><option value="light">Light</option>') + '</select></td>';
                     tableHtml += '<td><input type="number" class="device-id" value="" placeholder="ID" min="1" max="99" style="width: 60px; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary); text-align: center;"></td>';
                     tableHtml += '<td>GPIO' + pin.pin + '</td>';
                     tableHtml += '<td>' + capabilities + '</td>';
