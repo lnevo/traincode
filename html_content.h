@@ -1114,8 +1114,7 @@ const char* getMainPageHTML() {
             .catch(error => console.error('Control request error:', error));
         }
 
-        function controlLight(event, lightNumber) {
-            event.preventDefault();
+        function controlLight(lightNumber) {
             
             // Toggle the light state (ON/OFF)
             const formData = new FormData();
