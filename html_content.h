@@ -717,6 +717,7 @@ const char* getMainPageHTML() {
             }
         }, 100);
         
+        // Enhanced device table update function - simplified version
         function updateDeviceTable(data) {
             console.log('Updating device table with new data');
             console.log('Data received:', data);
@@ -729,153 +730,50 @@ const char* getMainPageHTML() {
             }
             let tableHtml = '';
             
-            // Check if we have the new all_pins data structure
-            if (data.all_pins && data.all_pins.length > 0) {
-                console.log('Using new all_pins data structure');
-                // Use the new data structure - this will be implemented in the next step
-                // For now, fall back to the old method
+            // Add sensors
+            if (data.sensor_states) {
+                data.sensor_states.forEach(function(sensor, i) {
+                    tableHtml += '<tr>';
+                    tableHtml += '<td>Sensor</td>';
+                    tableHtml += '<td>' + (sensor.id || (i + 1)) + '</td>';
+                    tableHtml += '<td>GPIO' + sensor.pin + '</td>';
+                    tableHtml += '<td>' + sensor.state + '</td>';
+                    tableHtml += '<td>' + (sensor.label || 'Sensor ' + (i + 1)) + '</td>';
+                    tableHtml += '<td><button disabled>' + sensor.state + '</button></td>';
+                    tableHtml += '</tr>';
+                });
             }
             
-            // Generate rows for all available pins, sorted by pin number
-            // Reserved pins: GPIO0,1,2,3,4,5,6,7,8,9,10,11,12,15,16,17,20,24,28,29,30,31,37,38
-            // Good to use (general I/O & PWM): 13,14,18,19,21,22,23,25,26,27,32,33
-            // Inputs-only (no internal pullups/downs): 34,35,36,39
-            const allPins = [13,14,18,19,21,22,23,25,26,27,32,33,34,35,36,39];
+            // Add turnouts
+            if (data.turnout_states) {
+                data.turnout_states.forEach(function(turnout, i) {
+                    tableHtml += '<tr>';
+                    tableHtml += '<td>Turnout</td>';
+                    tableHtml += '<td>' + (turnout.id || (i + 1)) + '</td>';
+                    tableHtml += '<td>GPIO' + turnout.pin + '</td>';
+                    tableHtml += '<td>' + turnout.position + '</td>';
+                    tableHtml += '<td>' + (turnout.label || 'Turnout ' + (i + 1)) + '</td>';
+                    tableHtml += '<td><button onclick="controlTurnout(' + (i + 1) + ')">' + turnout.position + '</button></td>';
+                    tableHtml += '</tr>';
+                });
+            }
             
-            // Separate used and unused pins
-            const usedPins = [];
-            const unusedPins = [];
-            
-            allPins.forEach((pinNum) => {
-                // Find existing device data for this pin
-                let deviceData = null;
-                let deviceType = 'unused';
-                let deviceId = '';
-                let deviceLabel = '';
-                let deviceState = '';
-                let deviceControl = '';
-                let deviceIndex = 0;
-                
-                // Check sensors
-                if(data.sensor_states) {
-                    data.sensor_states.forEach((sensor, i) => {
-                        if(sensor.pin == pinNum) {
-                            deviceData = sensor;
-                            deviceType = 'sensor';
-                            deviceId = sensor.id || (i + 1);
-                            deviceLabel = sensor.label || 'Sensor ' + (i + 1);
-                            deviceState = sensor.state;
-                            deviceIndex = i + 1;
-                            deviceControl = '<button class="control-btn ' + (sensor.state === 'ACTIVE' ? 'btn-green-active' : 'btn-red-active') + '" style="min-width:80px;cursor:default;" disabled>' + (sensor.state === 'ACTIVE' ? 'ACTIVE' : 'INACTIVE') + '</button>';
-                        }
-                    });
-                }
-                
-                // Check turnouts
-                if(!deviceData && data.turnout_states) {
-                    data.turnout_states.forEach((turnout, i) => {
-                        if(turnout.pin == pinNum) {
-                            deviceData = turnout;
-                            deviceType = 'turnout';
-                            deviceId = turnout.id || (i + 1);
-                            deviceLabel = turnout.label || 'Turnout ' + (i + 1);
-                            deviceState = turnout.position;
-                            deviceIndex = i + 1;
-                            const isThrown = (turnout.position === 'THROWN');
-                            deviceControl = '<button onclick="controlDevice(event,\'turnout\',' + (i + 1) + ',\'toggle\')" class="control-btn ' + (isThrown ? 'btn-green-active' : 'btn-red-active') + '" style="min-width:80px;">' + (isThrown ? 'THROWN' : 'CLOSED') + '</button>';
-                        }
-                    });
-                }
-                
-                // Check lights
-                if(!deviceData && data.lights) {
-                    data.lights.forEach((light, i) => {
-                        if(light.pin == pinNum) {
-                            deviceData = light;
-                            deviceType = 'light';
-                            deviceId = light.id || (i + 1);
-                            deviceLabel = light.label || 'Light ' + (i + 1);
-                            deviceState = light.state;
-                            deviceIndex = i + 1;
-                            deviceControl = '<button onclick="controlLight(event,' + (i + 1) + ')" class="control-btn ' + (light.state === 'ON' ? 'btn-green-active' : 'btn-red-active') + '" style="min-width:80px;">' + (light.state === 'ON' ? 'ON' : 'OFF') + '</button>';
-                        }
-                    });
-                }
-                
-                // If no device found, create unused row
-                if(!deviceData) {
-                    deviceType = 'unused';
-                    deviceId = '';
-                    deviceLabel = '';
-                    deviceState = 'N/A';
-                    deviceIndex = pinNum; // Use pin number as unique index for unused pins
-                    deviceControl = '<button class="control-btn" style="min-width:80px;cursor:default;background:var(--border-color);color:var(--text-secondary);" disabled>N/A</button>';
-                }
-                
-                // Store pin data for sorting
-                const pinData = {
-                    pinNum: pinNum,
-                    deviceData: deviceData,
-                    deviceType: deviceType,
-                    deviceId: deviceId,
-                    deviceLabel: deviceLabel,
-                    deviceState: deviceState,
-                    deviceControl: deviceControl,
-                    deviceIndex: deviceIndex
-                };
-                
-                if(deviceType === 'unused') {
-                    unusedPins.push(pinData);
-                } else {
-                    usedPins.push(pinData);
-                }
-            });
-            
-            // Sort used pins by GPIO number
-            usedPins.sort((a, b) => a.pinNum - b.pinNum);
-            
-            // Sort unused pins by GPIO number
-            unusedPins.sort((a, b) => a.pinNum - b.pinNum);
-            
-            // Generate rows: used pins first, then unused pins
-            [...usedPins, ...unusedPins].forEach((pinData) => {
-                // Generate row with static pin field
-                tableHtml += '<tr data-device-type="' + pinData.deviceType + '" data-device-num="' + pinData.deviceIndex + '" data-pin="' + pinData.pinNum + '">';
-                tableHtml += '<td><select class="device-type" onchange="updateDeviceType(\'' + pinData.deviceType + '\', ' + pinData.deviceIndex + ', this.value)" style="width:80px;padding:2px;border:1px solid var(--border-color);border-radius:3px;background:var(--bg-secondary);color:var(--text-primary);">';
-                
-                // Generate dropdown options based on pin capabilities
-                if (pinData.pinNum >= 13 && pinData.pinNum <= 33) {
-                    // I/O + PWM pins: can be Sensor, Turnout, Light, or Unused
-                    tableHtml += '<option value="sensor"' + (pinData.deviceType === 'sensor' ? ' selected' : '') + '>Sensor</option>';
-                    tableHtml += '<option value="turnout"' + (pinData.deviceType === 'turnout' ? ' selected' : '') + '>Turnout</option>';
-                    tableHtml += '<option value="light"' + (pinData.deviceType === 'light' ? ' selected' : '') + '>Light</option>';
-                    tableHtml += '<option value="unused"' + (pinData.deviceType === 'unused' ? ' selected' : '') + '>Unused</option>';
-                } else if (pinData.pinNum >= 34 && pinData.pinNum <= 39) {
-                    // Input-only pins: can only be Sensor or Unused
-                    tableHtml += '<option value="sensor"' + (pinData.deviceType === 'sensor' ? ' selected' : '') + '>Sensor</option>';
-                    tableHtml += '<option value="unused"' + (pinData.deviceType === 'unused' ? ' selected' : '') + '>Unused</option>';
-                } else {
-                    // Fallback for any other pins
-                    tableHtml += '<option value="unused"' + (pinData.deviceType === 'unused' ? ' selected' : '') + '>Unused</option>';
-                }
-                
-                tableHtml += '</select></td>';
-                tableHtml += '<td><input type="number" class="device-id" value="' + pinData.deviceId + '" onchange="updateDeviceId(\'' + pinData.deviceType + '\', ' + pinData.deviceIndex + ', this.value)" min="1" max="99" style="width:50px;padding:2px;border:1px solid var(--border-color);border-radius:3px;background:var(--bg-secondary);color:var(--text-primary);"></td>';
-                tableHtml += '<td style="text-align:center;font-weight:bold;color:var(--accent-primary);">GPIO' + pinData.pinNum + '</td>';
-                tableHtml += '<td>' + pinData.deviceState + '</td>';
-                tableHtml += '<td><input type="text" class="device-label" value="' + pinData.deviceLabel + '" onchange="updateDeviceLabel(\'' + pinData.deviceType + '\', ' + pinData.deviceIndex + ', this.value)" placeholder="Label" style="width:100px;padding:2px;border:1px solid var(--border-color);border-radius:3px;background:var(--bg-secondary);color:var(--text-primary);"></td>';
-                tableHtml += '<td>' + pinData.deviceControl + '</td></tr>';
-            });
-            
-            // Close the table
-            tableHtml += '</table>';
-            
-            // Add save button below the table
-            tableHtml += '<div style="text-align:left;padding:15px;">';
-            tableHtml += '<button onclick="saveAllDeviceSettings(event)" class="control-btn" style="background:var(--accent-primary);color:white;padding:10px 20px;font-size:1.1em;">Save</button>';
-            tableHtml += '</div>';
+            // Add lights
+            if (data.lights) {
+                data.lights.forEach(function(light, i) {
+                    tableHtml += '<tr>';
+                    tableHtml += '<td>Light</td>';
+                    tableHtml += '<td>' + (light.id || (i + 1)) + '</td>';
+                    tableHtml += '<td>GPIO' + light.pin + '</td>';
+                    tableHtml += '<td>' + light.state + '</td>';
+                    tableHtml += '<td>' + (light.label || 'Light ' + (i + 1)) + '</td>';
+                    tableHtml += '<td><button onclick="controlLight(' + (i + 1) + ')">' + light.state + '</button></td>';
+                    tableHtml += '</tr>';
+                });
+            }
             
             table.innerHTML = tableHtml;
+            console.log('Device table updated successfully');
         }
         
         const savedTab = localStorage.getItem('activeTab');
