@@ -1028,7 +1028,8 @@ void setupWebServer() {
   web_server.on("/wifi", HTTP_POST, handleWiFiConfig);
   web_server.on("/mqtt", HTTP_POST, handleMQTTConfig);
   web_server.on("/config", HTTP_GET, handleConfig);
-  web_server.on("/upload", HTTP_POST, handleDoUpdate, handleUpdateBody);
+web_server.on("/upload", HTTP_POST, handleDoUpdate, handleUpdateBody);
+web_server.on("/source", HTTP_GET, handleSource); // Raw HTML source endpoint
   
   web_server.begin();
   Serial.println("Web server started");
@@ -1737,6 +1738,14 @@ void handleConfig() {
   String response;
   serializeJson(doc, response);
   web_server.send(200, "application/json", response);
+}
+
+// Handler for /source endpoint - returns raw HTML source code
+void handleSource() {
+  String html = getMainPageHTML();
+  
+  // Set content type to text/plain so browser shows it as source code
+  web_server.send(200, "text/plain", html);
 }
 
 void handleWiFiConfig() {
