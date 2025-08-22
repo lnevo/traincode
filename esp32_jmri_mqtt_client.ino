@@ -1712,6 +1712,7 @@ void handleRoot() {
   html.replace("MQTT_TOPIC_PREFIX_PLACEHOLDER", preferences.getString("mqtt_topic_prefix", MQTT_TOPIC_PREFIX));
   html.replace("FIRMWARE_VERSION_PLACEHOLDER", String(FIRMWARE_VERSION));
   
+  Serial.println("HTML length: " + String(html.length()) + " bytes"); // Debug: output HTML length
   web_server.send(200, "text/html", html);
 }
 
@@ -1744,6 +1745,7 @@ void handleConfig() {
 void handleSource() {
   String html = getMainPageHTML();
   
+  Serial.println("Source HTML length: " + String(html.length()) + " bytes"); // Debug: output source HTML length
   // Set content type to text/plain so browser shows it as source code
   web_server.send(200, "text/plain", html);
 }
