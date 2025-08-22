@@ -525,15 +525,7 @@ const char* getMainPageHTML() {
                 </div>
             </div>
 
-            <div class="section">
-                <h2>System Status</h2>
-                <div class="status-display">
-                    <div id="status"></div>
-                    <div class="button-group utility-classes">
-                        <button onclick="checkStatus()">Refresh Status JSON</button>
-                    </div>
-                </div>
-            </div>
+
         </div>
 
         <div id="setup-tab" class="tab-content">
@@ -600,6 +592,16 @@ const char* getMainPageHTML() {
                     </div>
                     <div id="uploadStatus"></div>
                 </div>
+
+            <div class="section">
+                <h2>System Status</h2>
+                <div class="status-display">
+                    <div id="status"></div>
+                    <div class="button-group utility-classes">
+                        <button onclick="checkStatus()">Refresh Status JSON</button>
+                    </div>
+                </div>
+            </div>
 
                 <div class="section">
                     <h3>Device Management</h3>
