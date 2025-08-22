@@ -721,7 +721,7 @@ const char* getMainPageHTML() {
             }
         }, 100);
         
-        // Enhanced device table update function - simplified version
+        // Enhanced device table update function - sorted by GPIO pin number
         function updateDeviceTable(data) {
             console.log('Updating device table with new data');
             console.log('Data received:', data);
@@ -734,97 +734,104 @@ const char* getMainPageHTML() {
             }
             let tableHtml = '';
             
-                            // Add sensors
-                if (data.sensor_states) {
-                    data.sensor_states.forEach(function(sensor, i) {
-                        tableHtml += '<tr data-device-type="sensor" data-device-num="' + (i + 1) + '" data-pin="' + sensor.pin + '">';
-                        tableHtml += '<td><select class="device-type" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"><option value="sensor" selected>Sensor</option><option value="turnout">Turnout</option><option value="light">Light</option><option value="unused">Unused</option></select></td>';
-                        tableHtml += '<td><input type="number" class="device-id" value="' + (sensor.id || (i + 1)) + '" min="1" max="99" style="width: 60px; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary); text-align: center;"></td>';
-                        tableHtml += '<td>GPIO' + sensor.pin + '</td>';
-                        tableHtml += '<td>Input Only</td>';
-                        tableHtml += '<td>' + sensor.state + '</td>';
-                        tableHtml += '<td><input type="text" class="device-label" value="' + (sensor.label || 'Sensor ' + (i + 1)) + '" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"></td>';
-                        tableHtml += '<td><button disabled>' + sensor.state + '</button></td>';
-                        tableHtml += '</tr>';
-                    });
-                }
-            
-                            // Add turnouts
-                if (data.turnout_states) {
-                    data.turnout_states.forEach(function(turnout, i) {
-                        tableHtml += '<tr data-device-type="turnout" data-device-num="' + (i + 1) + '" data-pin="' + turnout.pin + '">';
-                        tableHtml += '<td><select class="device-type" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"><option value="turnout" selected>Turnout</option><option value="sensor">Sensor</option><option value="light">Light</option><option value="unused">Unused</option></select></td>';
-                        tableHtml += '<td><input type="number" class="device-id" value="' + (turnout.id || (i + 1)) + '" min="1" max="99" style="width: 60px; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary); text-align: center;"></td>';
-                        tableHtml += '<td>GPIO' + turnout.pin + '</td>';
-                        tableHtml += '<td>Output Only</td>';
-                        tableHtml += '<td>' + turnout.position + '</td>';
-                        tableHtml += '<td><input type="text" class="device-label" value="' + (turnout.label || 'Turnout ' + (i + 1)) + '" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"></td>';
-                        tableHtml += '<td><button onclick="controlLight(' + (i + 1) + ', \'turnout\')">' + turnout.position + '</button></td>';
-                        tableHtml += '</tr>';
-                    });
-                }
-            
-                            // Add lights
-                if (data.lights) {
-                    data.lights.forEach(function(light, i) {
-                        tableHtml += '<tr data-device-type="light" data-device-num="' + (i + 1) + '" data-pin="' + light.pin + '">';
-                        tableHtml += '<td><select class="device-type" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"><option value="light" selected>Light</option><option value="sensor">Sensor</option><option value="turnout">Turnout</option><option value="unused">Unused</option></select></td>';
-                        tableHtml += '<td><input type="number" class="device-id" value="' + (light.id || (i + 1)) + '" min="1" max="99" style="width: 60px; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary); text-align: center;"></td>';
-                        tableHtml += '<td>GPIO' + light.pin + '</td>';
-                        tableHtml += '<td>Output + PWM</td>';
-                        tableHtml += '<td>' + light.state + '</td>';
-                        tableHtml += '<td><input type="text" class="device-label" value="' + (light.label || 'Light ' + (i + 1)) + '" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"></td>';
-                        tableHtml += '<td><button onclick="controlLight(' + (i + 1) + ', \'light\')">' + light.state + '</button></td>';
-                        tableHtml += '</tr>';
-                    });
-                }
-            
-            // Add unused pins at the bottom (sorted by GPIO)
+            // Use all_pins data to iterate through pins in GPIO order
             if (data.all_pins) {
-                // Get list of used pins for comparison
-                const usedPins = new Set();
-                
-                if (data.sensor_states) {
-                    data.sensor_states.forEach(sensor => {
-                        if (sensor.pin && sensor.pin !== 'N/A') {
-                            usedPins.add(parseInt(sensor.pin));
+                // First pass: add active devices (sorted by GPIO pin number)
+                data.all_pins.forEach(function(pin) {
+                    if (pin.device_type !== 'unused') {
+                        // This is an active device
+                        const deviceType = pin.device_type;
+                        const pinNum = pin.pin;
+                        
+                        // Find the device data from the appropriate array
+                        let deviceData = null;
+                        let deviceIndex = 0;
+                        
+                        if (deviceType === 'sensor' && data.sensor_states) {
+                            deviceData = data.sensor_states.find(s => s.pin == pinNum);
+                            if (deviceData) {
+                                deviceIndex = data.sensor_states.indexOf(deviceData);
+                            }
+                        } else if (deviceType === 'turnout' && data.turnout_states) {
+                            deviceData = data.turnout_states.find(t => t.pin == pinNum);
+                            if (deviceData) {
+                                deviceIndex = data.turnout_states.indexOf(deviceData);
+                            }
+                        } else if (deviceType === 'light' && data.lights) {
+                            deviceData = data.lights.find(l => l.pin == pinNum);
+                            if (deviceData) {
+                                deviceIndex = data.lights.indexOf(deviceData);
+                            }
                         }
-                    });
-                }
-                
-                if (data.turnout_states) {
-                    data.turnout_states.forEach(turnout => {
-                        if (turnout.pin && turnout.pin !== 'N/A') {
-                            usedPins.add(parseInt(turnout.pin));
+                        
+                        if (deviceData) {
+                            // Create row for active device
+                            tableHtml += '<tr data-device-type="' + deviceType + '" data-device-num="' + (deviceIndex + 1) + '" data-pin="' + pinNum + '">';
+                            
+                            // Device type selector
+                            if (deviceType === 'sensor') {
+                                tableHtml += '<td><select class="device-type" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"><option value="sensor" selected>Sensor</option><option value="turnout">Turnout</option><option value="light">Light</option><option value="unused">Unused</option></select></td>';
+                            } else if (deviceType === 'turnout') {
+                                tableHtml += '<td><select class="device-type" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"><option value="turnout" selected>Turnout</option><option value="sensor">Sensor</option><option value="light">Light</option><option value="unused">Unused</option></select></td>';
+                            } else if (deviceType === 'light') {
+                                tableHtml += '<td><select class="device-type" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"><option value="light" selected>Light</option><option value="sensor">Sensor</option><option value="turnout">Turnout</option><option value="unused">Unused</option></select></td>';
+                            }
+                            
+                            // Device ID
+                            tableHtml += '<td><input type="number" class="device-id" value="' + (deviceData.id || (deviceIndex + 1)) + '" min="1" max="99" style="width: 60px; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary); text-align: center;"></td>';
+                            
+                            // Pin number
+                            tableHtml += '<td>GPIO' + pinNum + '</td>';
+                            
+                            // Capabilities
+                            if (deviceType === 'sensor') {
+                                tableHtml += '<td>Input Only</td>';
+                            } else if (deviceType === 'turnout') {
+                                tableHtml += '<td>Output Only</td>';
+                            } else if (deviceType === 'light') {
+                                tableHtml += '<td>Output + PWM</td>';
+                            }
+                            
+                            // State
+                            if (deviceType === 'sensor') {
+                                tableHtml += '<td>' + deviceData.state + '</td>';
+                            } else if (deviceType === 'turnout') {
+                                tableHtml += '<td>' + deviceData.position + '</td>';
+                            } else if (deviceType === 'light') {
+                                tableHtml += '<td>' + deviceData.state + '</td>';
+                            }
+                            
+                            // Label
+                            tableHtml += '<td><input type="text" class="device-label" value="' + (deviceData.label || (deviceType.charAt(0).toUpperCase() + deviceType.slice(1) + ' ' + (deviceIndex + 1))) + '" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"></td>';
+                            
+                            // Control button
+                            if (deviceType === 'sensor') {
+                                tableHtml += '<td><button disabled>' + deviceData.state + '</button></td>';
+                            } else if (deviceType === 'turnout') {
+                                tableHtml += '<td><button onclick="controlLight(' + (deviceIndex + 1) + ', \'turnout\')">' + deviceData.position + '</button></td>';
+                            } else if (deviceType === 'light') {
+                                tableHtml += '<td><button onclick="controlLight(' + (deviceIndex + 1) + ', \'light\')">' + deviceData.state + '</button></td>';
+                            }
+                            
+                            tableHtml += '</tr>';
                         }
-                    });
-                }
+                    }
+                });
                 
-                if (data.lights) {
-                    data.lights.forEach(light => {
-                        if (light.pin && light.pin !== 'N/A') {
-                            usedPins.add(parseInt(light.pin));
-                        }
-                    });
-                }
-                
-                // Filter and sort unused pins
-                const unusedPins = data.all_pins
-                    .filter(pin => !usedPins.has(pin.pin) && pin.device_type === 'unused')
-                    .sort((a, b) => a.pin - b.pin);
-                
-                // Add unused pins to table
-                unusedPins.forEach(function(pin) {
-                    const capabilities = pin.description || 'I/O';
-                    tableHtml += '<tr data-device-type="unused" data-device-num="0" data-pin="' + pin.pin + '" style="opacity: 0.6;">';
-                    tableHtml += '<td><select class="device-type" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"><option value="sensor">Sensor</option>' + (capabilities.includes('Input') ? '' : '<option value="turnout">Turnout</option><option value="light">Light</option>') + '<option value="unused" selected>Unused</option></select></td>';
-                    tableHtml += '<td><input type="number" class="device-id" value="" placeholder="ID" min="1" max="99" style="width: 60px; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary); text-align: center;"></td>';
-                    tableHtml += '<td>GPIO' + pin.pin + '</td>';
-                    tableHtml += '<td>' + capabilities + '</td>';
-                    tableHtml += '<td>Available</td>';
-                    tableHtml += '<td><input type="text" class="device-label" value="" placeholder="Enter label" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"></td>';
-                    tableHtml += '<td><span style="color: var(--text-muted);">Available</span></td>';
-                    tableHtml += '</tr>';
+                // Second pass: add unused pins (sorted by GPIO pin number)
+                data.all_pins.forEach(function(pin) {
+                    if (pin.device_type === 'unused') {
+                        const capabilities = pin.description || 'I/O';
+                        tableHtml += '<tr data-device-type="unused" data-device-num="0" data-pin="' + pin.pin + '" style="opacity: 0.6;">';
+                        tableHtml += '<td><select class="device-type" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"><option value="sensor">Sensor</option>' + (capabilities.includes('Input') ? '' : '<option value="turnout">Turnout</option><option value="light">Light</option>') + '<option value="unused" selected>Unused</option></select></td>';
+                        tableHtml += '<td><input type="number" class="device-id" value="" placeholder="ID" min="1" max="99" style="width: 60px; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary); text-align: center;"></td>';
+                        tableHtml += '<td>GPIO' + pin.pin + '</td>';
+                        tableHtml += '<td>' + capabilities + '</td>';
+                        tableHtml += '<td>Available</td>';
+                        tableHtml += '<td><input type="text" class="device-label" value="" placeholder="Enter label" style="width: 100%; padding: 4px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);"></td>';
+                        tableHtml += '<td><span style="color: var(--text-muted);">Available</span></td>';
+                        tableHtml += '</tr>';
+                    }
                 });
             }
             
